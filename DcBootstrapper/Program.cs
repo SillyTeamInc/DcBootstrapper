@@ -75,6 +75,7 @@ class Bootstrapper
         {
             Console.ForegroundColor = ConsoleColor.Red;
             Console.WriteLine($"\n[ERROR] {ex.Message}");
+            Console.WriteLine(ex.ToString());
             Console.ResetColor();
         }
     }
@@ -108,6 +109,7 @@ class Bootstrapper
             catch { /* fallback */ }
         }
 
+        Notify("New Update", "Downloading update for " + displayName + "!");
         Console.WriteLine("Downloading update...");
         var data = await client.GetByteArrayAsync(url);
         await File.WriteAllBytesAsync(destination, data);
@@ -118,7 +120,11 @@ class Bootstrapper
     {
         Console.WriteLine($"[*] Extracting Discord to {_installDir}...");
         
-        if (Directory.Exists(_discordAppDir)) Directory.Delete(_discordAppDir, true);
+        if (Directory.Exists(_discordAppDir))
+        {
+            Console.WriteLine("[!] Removing old installation!");
+            Directory.Delete(_discordAppDir, true);
+        }
 
         RunProcess("tar", $"-xzf {_discordTarPath} -C {_installDir}");
     }
@@ -154,7 +160,7 @@ class Bootstrapper
     
     private void SetupDesktopEntry()
     {
-        Console.WriteLine("[*] Patching internal Desktop Entry for Taskbar grouping...");
+        Console.WriteLine("[*] Patching .desktop file...");
 
         string desktopPath = Path.Combine(_discordAppDir, "discord-canary.desktop");
         string iconPath = Path.Combine(_discordAppDir, "discord.png");
@@ -219,6 +225,11 @@ class Bootstrapper
             return process?.ExitCode == 0;
         }
         catch { return false; }
+    }
+
+    public void Notify(string title, string body)
+    {
+        RunProcess("notify-send", $"-u normal \"{title}\" \"{body}\" --app-name \"Discord Canary Bootstrapper\"");
     }
 
     private int RunProcess(string fileName, string args = "", string workingDirectory = "", bool waitForExit = true, bool throwOnError = true)
