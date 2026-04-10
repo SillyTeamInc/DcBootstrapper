@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics;
+using System.Formats.Tar;
 using System.Net.Http.Headers;
 
 namespace DcBootstrapper;
@@ -16,13 +17,17 @@ class Program
 class Bootstrapper
 {
     private const string DiscordUrl = "https://discord.com/api/download/canary?platform=linux&format=tar.gz";
-    private const string EquilotlUrl = "https://github.com/Equicord/Equilotl/releases/latest/download/EquilotlCli-linux";
-    private const string DwiUrl = "https://github.com/SillyTeamInc/DWIPatcher/releases/download/bleeding-edge/DWIPatcher";
+
+    private const string EquilotlUrl =
+        "https://github.com/Equicord/Equilotl/releases/latest/download/EquilotlCli-linux";
+
+    private const string DwiUrl =
+        "https://github.com/SillyTeamInc/DWIPatcher/releases/download/bleeding-edge/DWIPatcher";
 
     private readonly string _baseDir;
     private readonly string _cacheDir;
     private readonly string _installDir;
-    
+
     private readonly string _discordTarPath;
     private readonly string _equilotlPath;
     private readonly string _dwiPath;
@@ -30,12 +35,13 @@ class Bootstrapper
 
     public Bootstrapper()
     {
-        _baseDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DiscordCanaryCustom");
+        _baseDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "DiscordCanaryCustom");
         _cacheDir = Path.Combine(_baseDir, "Cache");
         _installDir = Path.Combine(_baseDir, "App");
-        
+
         _discordAppDir = Path.Combine(_installDir, "DiscordCanary");
-        
+
         _discordTarPath = Path.Combine(_cacheDir, "discord.tar.gz");
         _equilotlPath = Path.Combine(_cacheDir, "EquilotlCli-linux");
         _dwiPath = Path.Combine(_cacheDir, "DWIPatcher");
@@ -66,7 +72,6 @@ class Bootstrapper
                     PatchWithEquicord();
                     PatchWithDwi();
                 }
-                
             }
 
             LaunchDiscord();
@@ -89,11 +94,11 @@ class Bootstrapper
 
         if (File.Exists(destination))
         {
-            try 
+            try
             {
                 var request = new HttpRequestMessage(HttpMethod.Head, url);
                 var response = await client.SendAsync(request);
-                
+
                 if (response.IsSuccessStatusCode)
                 {
                     long? remoteSize = response.Content.Headers.ContentLength;
@@ -106,27 +111,61 @@ class Bootstrapper
                     }
                 }
             }
-            catch { /* fallback */ }
+            catch
+            {
+                /* fallback */
+            }
         }
 
         Notify("New Update", "Downloading update for " + displayName + "!");
         Console.WriteLine("Downloading update...");
-        var data = await client.GetByteArrayAsync(url);
-        await File.WriteAllBytesAsync(destination, data);
-        return true;
+        /*var data = await client.GetByteArrayAsync(url);
+        await File.WriteAllBytesAsync(destination, data);*/
+        // Stream data to the file instead
+        await using var responseStream = await client.GetStreamAsync(url);
+        await using var fileStream = new FileStream(destination, FileMode.Create, FileAccess.Write, FileShare.None);
+        await responseStream.CopyToAsync(fileStream);
+        Console.WriteLine(" - Written to " + destination);
+        return File.Exists(destination);
     }
 
-    private void ExtractDiscord()
+    private async Task ExtractDiscord()
     {
         Console.WriteLine($"[*] Extracting Discord to {_installDir}...");
-        
+
         if (Directory.Exists(_discordAppDir))
         {
             Console.WriteLine("[!] Removing old installation!");
             Directory.Delete(_discordAppDir, true);
         }
 
-        RunProcess("tar", $"-xzf {_discordTarPath} -C {_installDir}");
+
+        // Extract using System.IO.Compression
+        using var tarStream = File.OpenRead(_discordTarPath);
+        using var gzipStream = new System.IO.Compression.GZipStream(tarStream, System.IO.Compression.CompressionMode.Decompress);
+        using var tarReader = new TarReader(gzipStream);
+        while (tarReader.GetNextEntry() is TarEntry entry)
+        {
+            string targetPath = Path.Combine(_installDir, entry.Name);
+            if (entry.EntryType == TarEntryType.Directory)
+            {
+                Directory.CreateDirectory(targetPath);
+            }
+            else if (entry.EntryType == TarEntryType.RegularFile)
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(targetPath) ?? _installDir);
+                await using var fileStream = new FileStream(targetPath, FileMode.Create, FileAccess.Write, FileShare.None);
+                try
+                {
+                    await entry.DataStream?.CopyToAsync(fileStream)!;
+                    UnixFileMode mode = entry.Mode;
+                    File.SetUnixFileMode(targetPath, mode);
+                } catch (Exception ex)
+                {
+                    Console.WriteLine($"[ERROR] Failed to extract {entry.Name}: {ex.Message}");
+                }
+            }
+        }
     }
 
     private void PatchWithEquicord()
@@ -157,14 +196,15 @@ class Bootstrapper
 
         RunProcess(cmd, args, workingDirectory: _discordAppDir, waitForExit: false);
     }
-    
+
     private void SetupDesktopEntry()
     {
         Console.WriteLine("[*] Patching .desktop file...");
 
         string desktopPath = Path.Combine(_discordAppDir, "discord-canary.desktop");
         string iconPath = Path.Combine(_discordAppDir, "discord.png");
-        string bootstrapperPath = Environment.ProcessPath ?? throw new Exception("Could not determine bootstrapper path.");
+        string bootstrapperPath =
+            Environment.ProcessPath ?? throw new Exception("Could not determine bootstrapper path.");
 
         if (!File.Exists(desktopPath))
         {
@@ -173,12 +213,12 @@ class Bootstrapper
         }
 
         var lines = File.ReadAllLines(desktopPath).ToList();
-    
+
         var updates = new Dictionary<string, string>
         {
             { "Exec", $"\"{bootstrapperPath}\"" },
             { "Path", _discordAppDir },
-            { "StartupWMClass", "discord-canary" }, 
+            { "StartupWMClass", "discord-canary" },
             { "Comment", "Discord Canary patched with Equicord and DWI" }
         };
 
@@ -202,17 +242,18 @@ class Bootstrapper
 
         File.WriteAllLines(desktopPath, lines);
         RunProcess("chmod", $"+x \"{desktopPath}\"");
-    
+
         Console.WriteLine($"    Successfully patched grouping for: {desktopPath}");
-        
-        string userAppsFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "applications");
+
+        string userAppsFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "applications");
         string linkPath = Path.Combine(userAppsFolder, "discord-canary-custom.desktop");
 
         if (!File.Exists(linkPath))
         {
             RunProcess("ln", $"-sf \"{desktopPath}\" \"{linkPath}\"");
         }
-        
+
         Console.WriteLine($"    Desktop entry setup complete. ({linkPath})");
     }
 
@@ -220,11 +261,15 @@ class Bootstrapper
     {
         try
         {
-            using var process = Process.Start(new ProcessStartInfo { FileName = "which", Arguments = command, UseShellExecute = false, CreateNoWindow = true });
+            using var process = Process.Start(new ProcessStartInfo
+                { FileName = "which", Arguments = command, UseShellExecute = false, CreateNoWindow = true });
             process?.WaitForExit();
             return process?.ExitCode == 0;
         }
-        catch { return false; }
+        catch
+        {
+            return false;
+        }
     }
 
     public void Notify(string title, string body)
@@ -232,7 +277,8 @@ class Bootstrapper
         RunProcess("notify-send", $"-u normal \"{title}\" \"{body}\" --app-name \"Discord Canary Bootstrapper\"");
     }
 
-    private int RunProcess(string fileName, string args = "", string workingDirectory = "", bool waitForExit = true, bool throwOnError = true)
+    private int RunProcess(string fileName, string args = "", string workingDirectory = "", bool waitForExit = true,
+        bool throwOnError = true)
     {
         var psi = new ProcessStartInfo
         {
@@ -242,6 +288,8 @@ class Bootstrapper
             UseShellExecute = false,
             CreateNoWindow = true
         };
+        
+        Console.WriteLine($"[i] Running: {fileName} {args}");
 
         using var proc = Process.Start(psi);
         if (proc == null) throw new Exception($"Failed to start: {fileName}");
@@ -252,6 +300,7 @@ class Bootstrapper
             if (throwOnError && proc.ExitCode != 0) throw new Exception($"{fileName} failed: {proc.ExitCode}");
             return proc.ExitCode;
         }
+
         return 0;
     }
 }
