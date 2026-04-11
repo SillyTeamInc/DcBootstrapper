@@ -251,6 +251,13 @@ class Bootstrapper
             File.Delete(linkPath);
         }
         
+        // make sure .local/share/applications exists
+        if (!Directory.Exists(userAppsFolder))
+        {
+            Console.WriteLine($"    Creating user applications folder at {userAppsFolder}...");
+            Directory.CreateDirectory(userAppsFolder);
+        }
+        
         RunProcess("ln", $"-sf \"{desktopPath}\" \"{linkPath}\"");
 
         Console.WriteLine($"    Desktop entry setup complete. ({linkPath})");
@@ -261,7 +268,7 @@ class Bootstrapper
         try
         {
             using var process = Process.Start(new ProcessStartInfo
-                { FileName = "which", Arguments = command, UseShellExecute = false, CreateNoWindow = true });
+                { FileName = "which", Arguments = command, UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true });
             process?.WaitForExit();
             return process?.ExitCode == 0;
         }
