@@ -198,7 +198,6 @@ class Bootstrapper
         Console.WriteLine("[*] Patching .desktop file...");
 
         string desktopPath = Path.Combine(_discordAppDir, ConfigManager.CurrentConfig?.DesktopName ?? "discord-canary.desktop");
-        string iconPath = Path.Combine(_discordAppDir, "discord.png");
         string bootstrapperPath =
             Environment.ProcessPath ?? throw new Exception("Could not determine bootstrapper path.");
 
@@ -245,11 +244,19 @@ class Bootstrapper
         string userAppsFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "applications");
         string linkPath = Path.Combine(userAppsFolder, "discord-custom.desktop");
-
+        
         if (File.Exists(linkPath))
         {
-            Console.WriteLine($"    Removing old desktop entry link at {linkPath}...");
-            File.Delete(linkPath);
+            try
+            {
+                // Sometimes this throws an exception even though the file exists and it 
+                // really annoys me lol its so intermittent
+                Console.WriteLine($"    Removing old desktop entry link at {linkPath}...");
+                File.Delete(linkPath);
+            } catch (Exception ex)
+            {
+                Console.WriteLine($"    [ERROR] Failed to remove old desktop entry link: {ex}");
+            }
         }
         
         // make sure .local/share/applications exists
@@ -259,7 +266,8 @@ class Bootstrapper
             Directory.CreateDirectory(userAppsFolder);
         }
         
-        RunProcess("ln", $"-sf \"{desktopPath}\" \"{linkPath}\"");
+        if (ConfigManager.CurrentConfig?.MakeApplicationsSymlink == true) 
+            File.CreateSymbolicLink(linkPath, desktopPath);
 
         Console.WriteLine($"    Desktop entry setup complete. ({linkPath})");
     }
@@ -306,16 +314,14 @@ class Bootstrapper
         bool throwOnError = true, bool notify = true)
 
     {
-        if (string.IsNullOrEmpty(workingDirectory)) workingDirectory = Directory.GetCurrentDirectory();
-        if (!Directory.Exists(workingDirectory))
+        if (string.IsNullOrEmpty(workingDirectory))
         {
-            // fall back to local share
-            workingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            if (!Directory.Exists(workingDirectory))
-            {
-                throw new Exception($"Working directory does not exist: {workingDirectory}");
-            }
+            try { workingDirectory = Directory.GetCurrentDirectory(); }
+            catch { workingDirectory = ""; }
         }
+
+        if (string.IsNullOrEmpty(workingDirectory) || !Directory.Exists(workingDirectory))
+            workingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         
         var psi = new ProcessStartInfo
         {

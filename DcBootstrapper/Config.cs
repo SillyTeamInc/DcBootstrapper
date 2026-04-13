@@ -8,6 +8,7 @@ public class Config
 { 
     public string? DiscordBranch { get; set; } 
     public string? InstallPath { get; set; }
+    public bool? MakeApplicationsSymlink { get; set; }
 
     
     [JsonIgnore]    
@@ -47,7 +48,8 @@ public class Config
     public static Config Default => new Config
     {
         DiscordBranch = "stable",
-        InstallPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DiscordCustom")
+        InstallPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DiscordCustom"),
+        MakeApplicationsSymlink = true
     };
 }
 
@@ -79,6 +81,18 @@ public static class ConfigManager
 
         string json = File.ReadAllText(ConfigFilePath);
         CurrentConfig = JsonSerializer.Deserialize<Config>(json);
+        
+        // kinda hacky solution to null values
+        bool updated = false;
+        foreach (var property in typeof(Config).GetProperties())
+        {
+            if (property.GetValue(CurrentConfig) == null)            {
+                property.SetValue(CurrentConfig, property.GetValue(Config.Default));
+                updated = true;
+            }
+        }
+        if (updated) SaveConfig();
+
         return;
     }
 
