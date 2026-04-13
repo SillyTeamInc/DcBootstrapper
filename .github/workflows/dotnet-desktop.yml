@@ -1,0 +1,89 @@
+name: make bleeding edge release
+
+on:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: write
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x 
+  
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --no-restore
+
+      - name: Test
+        run: dotnet test --no-build --verbosity normal
+
+  publish-linux:
+    needs: build-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      
+      - name: Publish Linux
+        run: dotnet publish -c Release -r linux-x64 --self-contained true -o publish/linux -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true
+      
+      - name: Upload Linux Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-build
+          path: publish/linux/
+          retention-days: 1
+
+  release:
+    needs: publish-linux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Download Linux Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-build
+          path: release/linux
+
+      - name: Remove License Files (Optional)
+        run: |
+          find release/ -type f -name "*.md" -delete
+
+      - name: Move Bleeding Edge Tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -f bleeding-edge
+          git push -f origin bleeding-edge
+
+      - name: Create or Update Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: bleeding-edge
+          name: Bleeding Edge Build
+          body: "Automated bleeding-edge build for the latest commit (${{ github.sha }})."
+          prerelease: false
+          files: |
+            release/linux/**
+        env:
+            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
