@@ -53,7 +53,10 @@ class Bootstrapper
             bool discordUpdated = await SmartDownloadAsync(ConfigManager.CurrentConfig?.DiscordUrl!, _discordTarPath, "Discord");
             bool equilotlUpdated = await SmartDownloadAsync(EquilotlUrl, _equilotlPath, "Equilotl CLI");
             bool dwiUpdated = await SmartDownloadAsync(DwiUrl, _dwiPath, "DWIPatcher");
-
+            // todo: add options to toggle off patching equicord and dwi
+            //       and also add the ability to change discord's launch flags.
+            //       would be nice to have.
+            //       maybe also custom patches? idfk lol
             if (discordUpdated || !Directory.Exists(_discordAppDir))
             {
                 await ExtractDiscord();
@@ -115,9 +118,7 @@ class Bootstrapper
 
         Notify("New Update", "Downloading update for " + displayName + "!");
         Console.WriteLine("Downloading update...");
-        /*var data = await client.GetByteArrayAsync(url);
-        await File.WriteAllBytesAsync(destination, data);*/
-        // Stream data to the file instead
+        
         await using var responseStream = await client.GetStreamAsync(url);
         await using var fileStream = new FileStream(destination, FileMode.Create, FileAccess.Write, FileShare.None);
         await responseStream.CopyToAsync(fileStream);
@@ -136,10 +137,10 @@ class Bootstrapper
         }
         
         // this is a one-time thing so i'm not making into a util
-        using var tarStream = File.OpenRead(_discordTarPath);
-        using var gzipStream = new System.IO.Compression.GZipStream(tarStream, System.IO.Compression.CompressionMode.Decompress);
-        using var tarReader = new TarReader(gzipStream);
-        while (tarReader.GetNextEntry() is TarEntry entry)
+        await using var tarStream = File.OpenRead(_discordTarPath);
+        await using var gzipStream = new System.IO.Compression.GZipStream(tarStream, System.IO.Compression.CompressionMode.Decompress);
+        await using var tarReader = new TarReader(gzipStream);
+        while (await tarReader.GetNextEntryAsync() is { } entry)
         {
             string targetPath = Path.Combine(_installDir, entry.Name);
             if (entry.EntryType == TarEntryType.Directory)
@@ -166,7 +167,7 @@ class Bootstrapper
     private void PatchWithEquicord()
     {
         Console.WriteLine("[*] Patching with Equilotl...");
-        RunProcess("chmod", $"+x {_equilotlPath}");
+        MakeExecutable(_equilotlPath);
 
         string args = $"-install -location {_discordAppDir}";
         RunProcess(_equilotlPath, args, throwOnError: false);
@@ -175,7 +176,7 @@ class Bootstrapper
     private void PatchWithDwi()
     {
         Console.WriteLine("[*] Patching with DWIPatcher...");
-        RunProcess("chmod", $"+x {_dwiPath}");
+        MakeExecutable(_dwiPath);
 
         string resourcesPath = Path.Combine(_discordAppDir, "resources");
         RunProcess(_dwiPath, $"\"{resourcesPath}\"", throwOnError: false);
@@ -237,7 +238,7 @@ class Bootstrapper
         }
 
         File.WriteAllLines(desktopPath, lines);
-        RunProcess("chmod", $"+x \"{desktopPath}\"");
+        MakeExecutable(desktopPath);
 
         Console.WriteLine($"    Successfully patched grouping for: {desktopPath}");
 
@@ -282,11 +283,40 @@ class Bootstrapper
     {
         RunProcess("notify-send", $"-u normal \"{title}\" \"{body}\" --app-name \"Discord {ConfigManager.CurrentConfig?.ProperBranch} Bootstrapper\"", notify: false);
     }
+    
+    private static void MakeExecutable(string path)
+    {
+        // !!! FUCK YOU CA1416
+        if (OperatingSystem.IsWindows())
+        {
+            Console.WriteLine($"[WARNING] Skipping making executable on Windows for {path}");
+            return;
+        }
+        
+        const UnixFileMode executableMode =
+            UnixFileMode.UserRead  | UnixFileMode.UserWrite  | UnixFileMode.UserExecute  |
+            UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
+            UnixFileMode.OtherRead | UnixFileMode.OtherExecute;
+
+
+        File.SetUnixFileMode(path, executableMode);
+    }
 
     private int RunProcess(string fileName, string args = "", string workingDirectory = "", bool waitForExit = true,
         bool throwOnError = true, bool notify = true)
 
     {
+        if (string.IsNullOrEmpty(workingDirectory)) workingDirectory = Directory.GetCurrentDirectory();
+        if (!Directory.Exists(workingDirectory))
+        {
+            // fall back to local share
+            workingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            if (!Directory.Exists(workingDirectory))
+            {
+                throw new Exception($"Working directory does not exist: {workingDirectory}");
+            }
+        }
+        
         var psi = new ProcessStartInfo
         {
             FileName = fileName,
