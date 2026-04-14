@@ -20,8 +20,6 @@ class Bootstrapper
 
     public Bootstrapper()
     {
-        ConfigManager.LoadConfig();
-        
         var baseDir = ConfigManager.CurrentConfig?.InstallPath ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "DiscordCustom");
         var cacheDir = Path.Combine(baseDir, "Cache");
         _installDir = Path.Combine(baseDir, "App");

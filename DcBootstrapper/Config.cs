@@ -9,6 +9,7 @@ public class Config
     public string? DiscordBranch { get; set; } 
     public string? InstallPath { get; set; }
     public bool? MakeApplicationsSymlink { get; set; }
+    public bool? AutoUpdateBootstrapper { get; set; }
 
     
     [JsonIgnore]    
@@ -49,7 +50,8 @@ public class Config
     {
         DiscordBranch = "stable",
         InstallPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DiscordCustom"),
-        MakeApplicationsSymlink = true
+        MakeApplicationsSymlink = true,
+        AutoUpdateBootstrapper = true
     };
 }
 
