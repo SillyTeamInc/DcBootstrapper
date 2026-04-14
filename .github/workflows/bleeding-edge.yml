@@ -53,7 +53,7 @@ jobs:
           path: publish/linux/
           retention-days: 1
 
-  release:
+  bleeding-edge-release:
     needs: publish-linux
     runs-on: ubuntu-latest
     steps:
