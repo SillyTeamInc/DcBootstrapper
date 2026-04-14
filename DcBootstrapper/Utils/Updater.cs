@@ -70,6 +70,7 @@ public class Updater
             return false;
         }
         
+        
 
         var asset = release.Assets.FirstOrDefault(a =>
             a.Name.Equals("DcBootstrapper", StringComparison.OrdinalIgnoreCase));
