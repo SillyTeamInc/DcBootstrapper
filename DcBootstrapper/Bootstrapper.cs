@@ -181,11 +181,16 @@ class Bootstrapper
     {
         string binary = Path.Combine(_discordAppDir, ConfigManager.CurrentConfig?.ExecutableName ?? "DiscordCanary");
         Console.WriteLine($"[*] Launching Discord from {binary}...");
-
         string cmd = CommandExists("kstart6") ? "kstart6" : (CommandExists("kstart") ? "kstart" : "setsid");
-        string args = (cmd.Contains("kstart")) ? $"-- {binary}" : binary;
 
-        ProcessUtil.RunProcess(cmd, args, workingDirectory: _discordAppDir, waitForExit: false);
+        var extraArgs = ConfigManager.CurrentConfig?.LaunchArgs ?? new List<string>();
+        string discordArgs = extraArgs.Count > 0 ? string.Join(" ", extraArgs) : "";
+        string args = cmd.Contains("kstart")
+            ? $"-- {binary} {discordArgs}".TrimEnd()
+            : $"{binary} {discordArgs}".TrimEnd();
+
+        var envVars = ConfigManager.CurrentConfig?.EnvVars;
+        ProcessUtil.RunProcess(cmd, args, workingDirectory: _discordAppDir, waitForExit: false, envVars: envVars);
     }
 
     private void SetupDesktopEntry()

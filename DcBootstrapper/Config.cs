@@ -10,7 +10,8 @@ public class Config
     public string? InstallPath { get; set; }
     public bool? MakeApplicationsSymlink { get; set; }
     public bool? AutoUpdateBootstrapper { get; set; }
-
+    public List<string>? LaunchArgs { get; set; }
+    public Dictionary<string, string>? EnvVars { get; set; }
     
     [JsonIgnore]    
     public string DiscordUrl => DiscordBranch?.ToLower() switch
@@ -51,7 +52,9 @@ public class Config
         DiscordBranch = "stable",
         InstallPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DiscordCustom"),
         MakeApplicationsSymlink = true,
-        AutoUpdateBootstrapper = true
+        AutoUpdateBootstrapper = true,
+        LaunchArgs = [],
+        EnvVars = new Dictionary<string, string>()
     };
 }
 
