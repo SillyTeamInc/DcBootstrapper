@@ -77,7 +77,13 @@ public class Updater
             a.Name.Equals("DcBootstrapper", StringComparison.OrdinalIgnoreCase));
 
         if (asset == null)
-            throw new Exception("No Linux asset found in latest release.");
+        {
+            // note: this case is sometimes triggered right after a release is made;
+            //       do not throw here...!
+            NotifyUtil.Notify("Update Failed", $"Latest version {latestTag} is available but no suitable asset was found. Please wait a minute and try again.");
+            Console.WriteLine("No suitable asset found in release, skipping update.");
+            return false;
+        }
 
         string selfPath = Environment.ProcessPath
             ?? throw new Exception("Could not determine bootstrapper path.");
