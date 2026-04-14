@@ -82,7 +82,7 @@ jobs:
           tag_name: bleeding-edge
           name: Bleeding Edge Build
           body: "Automated bleeding-edge build for the latest commit (${{ github.sha }})."
-          prerelease: false
+          prerelease: true
           files: |
             release/linux/**
         env:
