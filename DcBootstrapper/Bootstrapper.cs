@@ -128,6 +128,8 @@ class Bootstrapper
 
     private async Task ExtractDiscord()
     {
+        if (OperatingSystem.IsWindows()) return;
+
         Console.WriteLine($"[*] Extracting Discord to {_installDir}...");
 
         if (Directory.Exists(_discordAppDir))
@@ -205,7 +207,6 @@ class Bootstrapper
         {
             Console.WriteLine("    [!] Internal .desktop file not found. Creating a fresh one...");
             File.WriteAllText(desktopPath, "[Desktop Entry]\nType=Application\nName=Discord " + ConfigManager.CurrentConfig?.ProperBranch);
-            Notify("Notice", "Internal .desktop file was missing. A new one has been created, but it may not be perfect. Consider reinstalling if you encounter issues with the desktop entry.");
         }
 
         var lines = File.ReadAllLines(desktopPath).ToList();
@@ -294,12 +295,6 @@ class Bootstrapper
     
     private static void MakeExecutable(string path)
     {
-        // !!! FUCK YOU CA1416
-        if (OperatingSystem.IsWindows())
-        {
-            Console.WriteLine($"[WARNING] Skipping making executable on Windows for {path}");
-            return;
-        }
         
         const UnixFileMode executableMode =
             UnixFileMode.UserRead  | UnixFileMode.UserWrite  | UnixFileMode.UserExecute  |
