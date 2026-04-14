@@ -13,7 +13,10 @@ public class Downloader(string url, string filePath, bool isMultithreaded = fals
     {
         using var client = new HttpClient();
         client.DefaultRequestHeaders.UserAgent.ParseAdd("DcBootstrapper");
-
+        
+        await using (var fs = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.None))
+            fs.SetLength(TotalBytes);
+        
         var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
         response.EnsureSuccessStatusCode();
         TotalBytes = response.Content.Headers.ContentLength

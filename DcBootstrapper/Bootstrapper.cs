@@ -83,6 +83,19 @@ class Bootstrapper
             Console.ResetColor();
         }
     }
+    
+    private static string FormatBytes(long bytes)
+    {
+        string[] sizes = { "B", "KB", "MB", "GB", "TB" };
+        double len = bytes;
+        int order = 0;
+        while (len >= 1024 && order < sizes.Length - 1)
+        {
+            order++;
+            len /= 1024;
+        }
+        return $"{len} {sizes[order]}";
+    }
 
     private async Task<bool> SmartDownloadAsync(string url, string destination, string displayName)
     {
@@ -99,13 +112,24 @@ class Bootstrapper
                 var response = await client.SendAsync(request);
                 if (response.IsSuccessStatusCode)
                 {
-                    long? remoteSize = response.Content.Headers.ContentLength;
-                    long localSize = new FileInfo(destination).Length;
-                    if (remoteSize.HasValue && remoteSize.Value == localSize)
+                    string? remoteEtag = response.Headers.ETag?.Tag;
+                    string? remoteLastModified = response.Content.Headers.LastModified?.ToString("R");
+                    string cacheFile = destination + ".meta";
+
+                    if (File.Exists(cacheFile))
                     {
-                        Console.WriteLine("Up to date.");
-                        return false;
+                        string cached = await File.ReadAllTextAsync(cacheFile);
+                        string current = remoteEtag ?? remoteLastModified ?? "";
+                        if (!string.IsNullOrEmpty(current) && cached == current)
+                        {
+                            Console.WriteLine("Up to date.");
+                            return false;
+                        }
                     }
+
+                    string newMeta = remoteEtag ?? remoteLastModified ?? "";
+                    if (!string.IsNullOrEmpty(newMeta))
+                        await File.WriteAllTextAsync(cacheFile, newMeta);
                 }
             }
             catch { /* fallback */ }
