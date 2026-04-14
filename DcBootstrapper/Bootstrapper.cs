@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Formats.Tar;
+using DcBootstrapper.Utils;
 
 namespace DcBootstrapper;
 
@@ -114,7 +115,7 @@ class Bootstrapper
             }
         }
 
-        Notify("New Update", "Downloading update for " + displayName + "!");
+        NotifyUtil.Notify("New Update", "Downloading update for " + displayName + "!");
         Console.WriteLine("Downloading update...");
         
         await using var responseStream = await client.GetStreamAsync(url);
@@ -170,7 +171,7 @@ class Bootstrapper
         MakeExecutable(_equilotlPath);
 
         string args = $"-install -location {_discordAppDir}";
-        RunProcess(_equilotlPath, args, throwOnError: false);
+        ProcessUtil.RunProcess(_equilotlPath, args, throwOnError: false);
     }
 
     private void PatchWithDwi()
@@ -179,7 +180,7 @@ class Bootstrapper
         MakeExecutable(_dwiPath);
 
         string resourcesPath = Path.Combine(_discordAppDir, "resources");
-        RunProcess(_dwiPath, $"\"{resourcesPath}\"", throwOnError: false);
+        ProcessUtil.RunProcess(_dwiPath, $"\"{resourcesPath}\"", throwOnError: false);
     }
 
     private void LaunchDiscord()
@@ -190,7 +191,7 @@ class Bootstrapper
         string cmd = CommandExists("kstart6") ? "kstart6" : (CommandExists("kstart") ? "kstart" : "setsid");
         string args = (cmd.Contains("kstart")) ? $"-- {binary}" : binary;
 
-        RunProcess(cmd, args, workingDirectory: _discordAppDir, waitForExit: false);
+        ProcessUtil.RunProcess(cmd, args, workingDirectory: _discordAppDir, waitForExit: false);
     }
 
     private void SetupDesktopEntry()
@@ -285,11 +286,6 @@ class Bootstrapper
             return false;
         }
     }
-
-    public void Notify(string title, string body)
-    {
-        RunProcess("notify-send", $"-u normal \"{title}\" \"{body}\" --app-name \"Discord {ConfigManager.CurrentConfig?.ProperBranch} Bootstrapper\"", notify: false);
-    }
     
     private static void MakeExecutable(string path)
     {
@@ -303,40 +299,5 @@ class Bootstrapper
         File.SetUnixFileMode(path, executableMode);
     }
 
-    private int RunProcess(string fileName, string args = "", string workingDirectory = "", bool waitForExit = true,
-        bool throwOnError = true, bool notify = true)
-
-    {
-        if (string.IsNullOrEmpty(workingDirectory))
-        {
-            try { workingDirectory = Directory.GetCurrentDirectory(); }
-            catch { workingDirectory = ""; }
-        }
-
-        if (string.IsNullOrEmpty(workingDirectory) || !Directory.Exists(workingDirectory))
-            workingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        
-        var psi = new ProcessStartInfo
-        {
-            FileName = fileName,
-            Arguments = args,
-            WorkingDirectory = workingDirectory,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-
-        if (notify) Console.WriteLine($"[i] Running: {fileName} {args}");
-
-        using var proc = Process.Start(psi);
-        if (proc == null) throw new Exception($"Failed to start: {fileName}");
-
-        if (waitForExit)
-        {
-            proc.WaitForExit();
-            if (throwOnError && proc.ExitCode != 0) throw new Exception($"{fileName} failed: {proc.ExitCode}");
-            return proc.ExitCode;
-        }
-
-        return 0;
-    }
+    
 }

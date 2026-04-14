@@ -63,15 +63,16 @@ public class Updater
         }
 
         Console.WriteLine($"Update available: {currentTag} -> {latestTag}");
-
+        
         if (ConfigManager.CurrentConfig?.AutoUpdateBootstrapper == false)
         {
             Console.WriteLine("Auto-update is disabled in config, skipping update.");
             return false;
         }
-        
-        
 
+        NotifyUtil.Notify("Update Available", $"A new version of the bootstrapper is available: {latestTag}");
+        
+        
         var asset = release.Assets.FirstOrDefault(a =>
             a.Name.Equals("DcBootstrapper", StringComparison.OrdinalIgnoreCase));
 

@@ -8,7 +8,6 @@ class Program
 {
     static async Task Main(string[] args)
     {
-        // !!! FUCK YOU CA1416
         if (OperatingSystem.IsWindows()) return;
 
         Console.WriteLine($"DcBootstrapper {Updater.GetCurrentTag()} ({ThisAssembly.Git.Branch}-{ThisAssembly.Git.Commit})");
@@ -16,6 +15,7 @@ class Program
         
         if (await Updater.CheckAndUpdateAsync())
         {
+            args = args.Append($"--previous-version:{Updater.GetCurrentTag()}").Append($"--updated").ToArray();
             Process.Start(new ProcessStartInfo
             {
                 FileName  = Environment.ProcessPath!,
@@ -24,6 +24,12 @@ class Program
             });
             return;
         }
+        
+        if (args.Contains("--updated"))
+        {
+            NotifyUtil.Notify("Bootstrapper Updated", $"Updated to version {Updater.GetCurrentTag()}!");
+        }
+        
 
         if (Debugger.IsAttached) Debugger.Break();
         var bootstrapper = new Bootstrapper();
