@@ -48,6 +48,7 @@ class Bootstrapper
     {
         try
         {
+            Directory.SetCurrentDirectory("/tmp");
             
             bool discordUpdated = await SmartDownloadAsync(ConfigManager.CurrentConfig?.DiscordUrl!, _discordTarPath, "Discord");
             bool equilotlUpdated = await SmartDownloadAsync(EquilotlUrl, _equilotlPath, "Equilotl CLI");
@@ -181,11 +182,16 @@ class Bootstrapper
     {
         string binary = Path.Combine(_discordAppDir, ConfigManager.CurrentConfig?.ExecutableName ?? "DiscordCanary");
         Console.WriteLine($"[*] Launching Discord from {binary}...");
-        string cmd = CommandExists("kstart6") ? "kstart6" : (CommandExists("kstart") ? "kstart" : "setsid");
+
+        string cmd =
+            CommandExists("kstart6", out string kstart6Path) ? kstart6Path :
+            CommandExists("kstart",  out string kstartPath)  ? kstartPath  :
+            CommandExists("setsid",  out string setsidPath)  ? setsidPath  :
+            throw new Exception("Could not find kstart6, kstart, or setsid.");
 
         var extraArgs = ConfigManager.CurrentConfig?.LaunchArgs ?? new List<string>();
         string discordArgs = extraArgs.Count > 0 ? string.Join(" ", extraArgs) : "";
-        string args = cmd.Contains("kstart")
+        string args = Path.GetFileName(cmd).Contains("kstart")
             ? $"-- {binary} {discordArgs}".TrimEnd()
             : $"{binary} {discordArgs}".TrimEnd();
 
@@ -271,19 +277,24 @@ class Bootstrapper
         Console.WriteLine($"    Desktop entry setup complete. ({linkPath})");
     }
 
-    private bool CommandExists(string command)
+    private bool CommandExists(string command, out string fullPath)
     {
+        fullPath = "";
         try
         {
-            using var process = Process.Start(new ProcessStartInfo
-                { FileName = "which", Arguments = command, UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true });
-            process?.WaitForExit();
-            return process?.ExitCode == 0;
+            var psi = new ProcessStartInfo
+            {
+                FileName = "/usr/bin/which", Arguments = command,
+                UseShellExecute = false, CreateNoWindow = true,
+                RedirectStandardOutput = true, WorkingDirectory = "/tmp"
+            };
+            using var process = Process.Start(psi);
+            if (process == null) return false;
+            fullPath = process.StandardOutput.ReadToEnd().Trim();
+            process.WaitForExit();
+            return process.ExitCode == 0 && !string.IsNullOrEmpty(fullPath);
         }
-        catch
-        {
-            return false;
-        }
+        catch { return false; }
     }
     
     private static void MakeExecutable(string path)
