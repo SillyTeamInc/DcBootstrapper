@@ -96,12 +96,10 @@ class Bootstrapper
             {
                 var request = new HttpRequestMessage(HttpMethod.Head, url);
                 var response = await client.SendAsync(request);
-
                 if (response.IsSuccessStatusCode)
                 {
                     long? remoteSize = response.Content.Headers.ContentLength;
                     long localSize = new FileInfo(destination).Length;
-
                     if (remoteSize.HasValue && remoteSize.Value == localSize)
                     {
                         Console.WriteLine("Up to date.");
@@ -109,19 +107,15 @@ class Bootstrapper
                     }
                 }
             }
-            catch
-            {
-                /* fallback */
-            }
+            catch { /* fallback */ }
         }
 
-        NotifyUtil.Notify("New Update", "Downloading update for " + displayName + "!");
-        Console.WriteLine("Downloading update...");
-        
-        await using var responseStream = await client.GetStreamAsync(url);
-        await using var fileStream = new FileStream(destination, FileMode.Create, FileAccess.Write, FileShare.None);
-        await responseStream.CopyToAsync(fileStream);
-        Console.WriteLine(" - Written to " + destination);
+        Console.WriteLine($"Downloading update...");
+        NotifyUtil.Notify("New Update", $"Downloading update for {displayName}!");
+
+        var downloader = new Downloader(url, destination, isMultithreaded: true);
+        await downloader.DownloadFileMultithreaded(Environment.ProcessorCount);
+
         return File.Exists(destination);
     }
 
