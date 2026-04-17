@@ -1,6 +1,10 @@
 using System.Diagnostics;
 using System.Formats.Tar;
 using DcBootstrapper.Utils;
+using EmniProgress.Backends;
+using EmniProgress.Backends.KDE;
+using EmniProgress.Core;
+using EmniProgress.Factory;
 
 namespace DcBootstrapper;
 
@@ -43,6 +47,9 @@ class Bootstrapper
         Console.WriteLine($"[c] Config: Branch: " + ConfigManager.CurrentConfig?.DiscordBranch);
         Console.WriteLine($"[c] Config: Install Path: " + ConfigManager.CurrentConfig?.InstallPath);
     }
+    
+    private static bool _userCancel = true;
+    
 
     public async Task RunAsync()
     {
@@ -50,29 +57,64 @@ class Bootstrapper
         {
             Directory.SetCurrentDirectory("/tmp");
             
+            // kinda stinky but whatever it works
+            await using var fakeProggers = (CompositeProgressBackend)EmniFactory.Create();
+            var kde = fakeProggers.GetBackend<KdeProgressBackend>();
+            // todo: add functionality to EmniProgress to only use main backend
+            IProgressBackend proggers = kde != null ? kde : fakeProggers;
+            if (kde != null)
+            {
+                kde.OnCancel(() =>
+                {
+                    if (!_userCancel) return Task.CompletedTask;
+                    Console.WriteLine("[*] Update cancelled by user.");
+                    kde.CancelAsync("Cancelled by user!");
+                    Environment.Exit(0);
+                    return Task.CompletedTask;
+                });
+            }
+            await proggers.StartAsync("Checking for updates...", "Initializing...", $"Discord {ConfigManager.CurrentConfig?.ProperBranch} Bootstrapper {Updater.GetCurrentTag()}", "update");
+            
+            await proggers.UpdateAsync(0, "Checking Discord...");
             bool discordUpdated = await SmartDownloadAsync(ConfigManager.CurrentConfig?.DiscordUrl!, _discordTarPath, "Discord");
+            
+            await proggers.UpdateAsync(0, "Checking Equilotl...");
             bool equilotlUpdated = await SmartDownloadAsync(EquilotlUrl, _equilotlPath, "Equilotl CLI");
+            
+            await proggers.UpdateAsync(0, "Checking DWIPatcher...");
             bool dwiUpdated = await SmartDownloadAsync(DwiUrl, _dwiPath, "DWIPatcher");
+            
             // todo: add options to toggle off patching equicord and dwi
             //       and also add the ability to change discord's launch flags.
             //       would be nice to have.
             //       maybe also custom patches? idfk lol
             if (discordUpdated || !Directory.Exists(_discordAppDir))
             {
+                await proggers.UpdateAsync(0, "Extracting Discord...");
                 await ExtractDiscord();
+                
+                await proggers.UpdateAsync(0, "Setting up desktop entry...");
                 SetupDesktopEntry();
+                
+                await proggers.UpdateAsync(0, "Applying equicord patch...");
                 PatchWithEquicord();
+                
+                await proggers.UpdateAsync(0, "Applying DWI patch...");
                 PatchWithDwi();
             }
             else
             {
                 if (equilotlUpdated || dwiUpdated)
                 {
+                    await proggers.UpdateAsync(0, "Applying equicord patch...");
                     PatchWithEquicord();
+                    await proggers.UpdateAsync(0, "Applying DWI patch...");
                     PatchWithDwi();
                 }
             }
 
+            _userCancel = false;
+            await proggers.CancelAsync("Download finished");
             LaunchDiscord();
         }
         catch (Exception ex)
@@ -136,7 +178,6 @@ class Bootstrapper
         }
 
         Console.WriteLine($"Downloading update...");
-        NotifyUtil.Notify("New Update", $"Downloading update for {displayName}!");
 
         var downloader = new Downloader(url, destination, isMultithreaded: true);
         await downloader.DownloadFileMultithreaded(Environment.ProcessorCount);
@@ -265,6 +306,7 @@ class Bootstrapper
             lines.Add($"{remaining.Key}={remaining.Value}");
         }
 
+        
         File.WriteAllLines(desktopPath, lines);
         MakeExecutable(desktopPath);
 

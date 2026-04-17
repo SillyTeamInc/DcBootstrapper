@@ -1,6 +1,9 @@
 ﻿using System.Diagnostics;
 using System.Net.Http.Headers;
 using DcBootstrapper.Utils;
+using EmniProgress.Backends;
+using EmniProgress.Backends.KDE;
+using EmniProgress.Factory;
 
 namespace DcBootstrapper;
 

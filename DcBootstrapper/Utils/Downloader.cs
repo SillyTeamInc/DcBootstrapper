@@ -1,3 +1,7 @@
+using EmniProgress.Backends;
+using EmniProgress.Backends.KDE;
+using EmniProgress.Factory;
+
 namespace DcBootstrapper.Utils;
 
 using System.Collections.Concurrent;
@@ -16,6 +20,14 @@ public class Downloader(string url, string filePath, bool isMultithreaded = fals
         
         await using (var fs = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.None))
             fs.SetLength(TotalBytes);
+
+        await using var proggers = (CompositeProgressBackend)EmniFactory.Create();
+        var kde = proggers.GetBackend<KdeProgressBackend>();
+        await proggers.StartAsync("Downloading", Path.GetFileName(filePath), $"Discord {ConfigManager.CurrentConfig?.ProperBranch} Bootstrapper {Updater.GetCurrentTag()}", "download");
+        if (kde != null)
+        {
+            await kde.UpdateDescriptionFieldAsync(1, "File", Path.GetFileName(filePath));
+        }
         
         var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
         response.EnsureSuccessStatusCode();
@@ -31,14 +43,38 @@ public class Downloader(string url, string filePath, bool isMultithreaded = fals
             long end   = i == taskCount - 1 ? TotalBytes - 1 : start + chunkSize - 1;
             return Task.Run(() => DownloadChunkAsync(start, end, i));
         }).ToList();
+        
+        KeyValuePair<long, DateTime> oldProgress = new(0, DateTime.UtcNow);
 
         while (!tasks.All(t => t.IsCompleted))
         {
-            Console.Write($"\r[*] Downloading... {BytesDownloaded * 100 / TotalBytes}%   ");
-            await Task.Delay(100);
-        }
+            var currentBytes = BytesDownloaded;
+            var now = DateTime.UtcNow;
+            var elapsedSeconds = (now - oldProgress.Value).TotalSeconds;
+            var bytesDelta = currentBytes - oldProgress.Key;
+            var currentSpeed = elapsedSeconds > 0 ? bytesDelta / elapsedSeconds : 0;
 
+            oldProgress = new KeyValuePair<long, DateTime>(currentBytes, now);
+
+            if (kde != null)
+            {
+                await kde.UpdateAmountAsync((ulong)TotalBytes, (ulong)currentBytes);
+                await kde.UpdateSpeedAsync((ulong)Math.Max(0, currentSpeed));
+                await kde.UpdateAsync( new Dictionary<string, object>()
+                {
+                    { "infoMessage", "File:  " + Path.GetFileName(filePath) },
+                });
+            }
+            
+            
+            double percent = TotalBytes > 0 ? (currentBytes * 100.0 / TotalBytes) : 0;
+            await proggers.UpdateAsync((float)percent, $"Downloading " + Path.GetFileName(filePath));
+            
+            await Task.Delay(50);
+        }
+        
         await Task.WhenAll(tasks);
+        await proggers.CancelAsync("Download complete.");
         Console.WriteLine($"\r[*] Download complete.                    ");
     }
 

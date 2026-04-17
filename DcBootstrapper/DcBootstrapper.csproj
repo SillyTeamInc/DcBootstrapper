@@ -8,6 +8,7 @@
     </PropertyGroup>
 
     <ItemGroup>
+      <PackageReference Include="EmniProgress" Version="0.0.7" />
       <PackageReference Include="GitInfo" Version="3.6.0">
         <PrivateAssets>all</PrivateAssets>
         <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
