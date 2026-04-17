@@ -143,44 +143,41 @@ class Bootstrapper
     {
         using var client = new HttpClient();
         client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36");
+        string cacheFile = destination + ".meta";
+        string newMeta = "";
 
         Console.Write($"[*] Checking {displayName}... ");
 
-        if (File.Exists(destination))
+        try
         {
-            try
+            var request = new HttpRequestMessage(HttpMethod.Head, url);
+            var response = await client.SendAsync(request);
+            if (response.IsSuccessStatusCode)
             {
-                var request = new HttpRequestMessage(HttpMethod.Head, url);
-                var response = await client.SendAsync(request);
-                if (response.IsSuccessStatusCode)
+                string? remoteEtag = response.Headers.ETag?.Tag;
+                string? remoteLastModified = response.Content.Headers.LastModified?.ToString("R");
+                newMeta = remoteEtag ?? remoteLastModified ?? "";
+
+                if (File.Exists(destination) && File.Exists(cacheFile))
                 {
-                    string? remoteEtag = response.Headers.ETag?.Tag;
-                    string? remoteLastModified = response.Content.Headers.LastModified?.ToString("R");
-                    string cacheFile = destination + ".meta";
-
-                    if (File.Exists(cacheFile))
+                    string cached = await File.ReadAllTextAsync(cacheFile);
+                    if (!string.IsNullOrEmpty(newMeta) && cached == newMeta)
                     {
-                        string cached = await File.ReadAllTextAsync(cacheFile);
-                        string current = remoteEtag ?? remoteLastModified ?? "";
-                        if (!string.IsNullOrEmpty(current) && cached == current)
-                        {
-                            Console.WriteLine("Up to date.");
-                            return false;
-                        }
+                        Console.WriteLine("Up to date.");
+                        return false;
                     }
-
-                    string newMeta = remoteEtag ?? remoteLastModified ?? "";
-                    if (!string.IsNullOrEmpty(newMeta))
-                        await File.WriteAllTextAsync(cacheFile, newMeta);
                 }
             }
-            catch { /* fallback */ }
         }
+        catch { /* fallback */ }
 
         Console.WriteLine($"Downloading update...");
 
         var downloader = new Downloader(url, destination, isMultithreaded: true);
         await downloader.DownloadFileMultithreaded(Environment.ProcessorCount);
+
+        if (!string.IsNullOrEmpty(newMeta) && File.Exists(destination))
+            await File.WriteAllTextAsync(cacheFile, newMeta);
 
         return File.Exists(destination);
     }
