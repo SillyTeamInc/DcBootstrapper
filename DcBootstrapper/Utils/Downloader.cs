@@ -44,17 +44,22 @@ public class Downloader(string url, string filePath, bool isMultithreaded = fals
             return Task.Run(() => DownloadChunkAsync(start, end, i));
         }).ToList();
         
-        KeyValuePair<long, DateTime> oldProgress = new(0, DateTime.UtcNow);
+        var speedSamples = new Queue<KeyValuePair<DateTime, long>>();
 
         while (!tasks.All(t => t.IsCompleted))
         {
             var currentBytes = BytesDownloaded;
             var now = DateTime.UtcNow;
-            var elapsedSeconds = (now - oldProgress.Value).TotalSeconds;
-            var bytesDelta = currentBytes - oldProgress.Key;
+            speedSamples.Enqueue(new KeyValuePair<DateTime, long>(now, currentBytes));
+
+            while (speedSamples.Count > 1 && (now - speedSamples.Peek().Key).TotalSeconds > 1)
+                speedSamples.Dequeue();
+
+            var oldestSample = speedSamples.Peek();
+            var elapsedSeconds = (now - oldestSample.Key).TotalSeconds;
+            var bytesDelta = currentBytes - oldestSample.Value;
             var currentSpeed = elapsedSeconds > 0 ? bytesDelta / elapsedSeconds : 0;
 
-            oldProgress = new KeyValuePair<long, DateTime>(currentBytes, now);
 
             if (kde != null)
             {
@@ -68,7 +73,7 @@ public class Downloader(string url, string filePath, bool isMultithreaded = fals
             
             
             double percent = TotalBytes > 0 ? (currentBytes * 100.0 / TotalBytes) : 0;
-            await proggers.UpdateAsync((float)percent, $"Downloading " + Path.GetFileName(filePath));
+            await proggers.UpdateAsync((float)percent, $"Downloading - {currentSpeed / 1024:0.00} KB/s");
             
             await Task.Delay(50);
         }
