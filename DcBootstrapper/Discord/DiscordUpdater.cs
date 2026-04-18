@@ -65,20 +65,20 @@ public class DiscordUpdater
             if (!manifest.Modules.TryGetValue(moduleName, out var moduleInfo)) continue;
 
             var pkg = moduleInfo.Full;
-            if (state.Modules.TryGetValue(moduleName, out int installedVer) && installedVer == pkg.ModuleVersion)
+            string moduleKey = $"{pkg.HostVersion[0]}.{pkg.HostVersion[1]}.{pkg.HostVersion[2]}_{pkg.ModuleVersion}";
+
+            if (state.ModuleKeys.TryGetValue(moduleName, out string? installedKey) && installedKey == moduleKey)
                 continue;
 
             Console.WriteLine($"[*] Downloading module {moduleName} v{pkg.ModuleVersion}...");
             await balls.UpdateAsync(0, "Downloading module " + moduleName + "...");
             string modulePath = Path.Combine(_cacheDir, $"{moduleName}.distro");
             await DownloadAndVerifyAsync(pkg.Url, modulePath, pkg.Sha256, moduleName);
-            
-            
 
             string moduleInstallDir = Path.Combine(moduleDir, moduleName);
             Directory.CreateDirectory(moduleInstallDir);
             await ExtractDistroAsync(modulePath, moduleInstallDir);
-            state.Modules[moduleName] = pkg.ModuleVersion;
+            state.ModuleKeys[moduleName] = moduleKey;
         }
 
         await WriteInstalledJsonAsync(moduleDir, manifest);
@@ -246,7 +246,6 @@ public class DiscordUpdater
     private class InstallState
     {
         [JsonPropertyName("host_version")] public string? HostVersion { get; set; }
-
-        [JsonPropertyName("modules")] public Dictionary<string, int> Modules { get; set; } = new();
+        [JsonPropertyName("module_keys")]  public Dictionary<string, string> ModuleKeys { get; set; } = new();
     }
 }
