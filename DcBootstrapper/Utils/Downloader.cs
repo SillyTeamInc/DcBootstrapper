@@ -13,7 +13,7 @@ public class Downloader(string url, string filePath, bool isMultithreaded = fals
     private long BytesDownloaded => _chunkProgress.Values.Sum();
     public long TotalBytes { get; private set; }
 
-    public async Task DownloadFileMultithreaded(int taskCount = 4)
+    public async Task DownloadFileMultithreaded(int taskCount = 2)
     {
         using var client = new HttpClient();
         client.DefaultRequestHeaders.UserAgent.ParseAdd("DcBootstrapper");
@@ -74,6 +74,7 @@ public class Downloader(string url, string filePath, bool isMultithreaded = fals
         }
         
         await Task.WhenAll(tasks);
+        await proggers.UpdateAsync(100, "Downloaded " + Path.GetFileName(filePath));
         await proggers.CancelAsync("Download complete.");
         Console.WriteLine($"\r[*] Download complete.                    ");
     }
@@ -81,7 +82,7 @@ public class Downloader(string url, string filePath, bool isMultithreaded = fals
     private async Task DownloadChunkAsync(long start, long end, int id)
     {
         using var client = new HttpClient();
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("DcBootstrapper");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("Discord-Updater/1"); // lol
 
         var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.Range = new System.Net.Http.Headers.RangeHeaderValue(start, end);

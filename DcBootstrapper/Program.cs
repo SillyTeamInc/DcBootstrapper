@@ -33,8 +33,6 @@ class Program
             NotifyUtil.Notify("Bootstrapper Updated", $"Updated to version {Updater.GetCurrentTag()}!");
         }
         
-
-        if (Debugger.IsAttached) Debugger.Break();
         var bootstrapper = new Bootstrapper();
         await bootstrapper.RunAsync();
     }

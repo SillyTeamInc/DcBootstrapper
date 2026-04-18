@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Formats.Tar;
+using DcBootstrapper.Discord;
 using DcBootstrapper.Utils;
 using EmniProgress.Backends;
 using EmniProgress.Backends.KDE;
@@ -22,24 +23,25 @@ class Bootstrapper
     private readonly string _discordTarPath;
     private readonly string _equilotlPath;
     private readonly string _dwiPath;
+    private readonly string _cacheDir;
 
     public Bootstrapper()
     {
         var baseDir = ConfigManager.CurrentConfig?.InstallPath ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "DiscordCustom");
-        var cacheDir = Path.Combine(baseDir, "Cache");
+        _cacheDir = Path.Combine(baseDir, "Cache");
         _installDir = Path.Combine(baseDir, "App");
         
         _discordAppDir = Path.Combine(_installDir, ConfigManager.CurrentConfig?.ExecutableName ?? "DiscordCanary");
 
-        _discordTarPath = Path.Combine(cacheDir, "discord.tar.gz");
-        _equilotlPath = Path.Combine(cacheDir, "EquilotlCli-linux");
-        _dwiPath = Path.Combine(cacheDir, "DWIPatcher");
+        _discordTarPath = Path.Combine(_cacheDir, "discord.tar.gz");
+        _equilotlPath = Path.Combine(_cacheDir, "EquilotlCli-linux");
+        _dwiPath = Path.Combine(_cacheDir, "DWIPatcher");
 
-        Directory.CreateDirectory(cacheDir);
+        Directory.CreateDirectory(_cacheDir);
         Directory.CreateDirectory(_installDir);
         
         Console.WriteLine($"[i] Base directory: {baseDir}");
-        Console.WriteLine($"[i] Cache directory: {cacheDir}");
+        Console.WriteLine($"[i] Cache directory: {_cacheDir}");
         Console.WriteLine($"[i] Install directory: {_installDir}");
         Console.WriteLine($"[i] Discord .tar.gz path: {_discordTarPath}");
         Console.WriteLine($"[i] Equilotl CLI path: {_equilotlPath}");
@@ -53,30 +55,46 @@ class Bootstrapper
 
     public async Task RunAsync()
     {
+        // note: needs to be outside of try-catch block or it will cancel when an exception is thrown lol
+        await using var fakeProggers = (CompositeProgressBackend)EmniFactory.Create();
+        var kde = fakeProggers.GetBackend<KdeProgressBackend>();
+        // todo: add functionality to EmniProgress to only use main backend
+        IProgressBackend proggers = kde != null ? kde : fakeProggers;
+        if (kde != null)
+        {
+            kde.OnCancel(() =>
+            {
+                if (!_userCancel) return Task.CompletedTask;
+                Console.WriteLine("[*] Update cancelled by user.");
+                kde.CancelAsync("Cancelled by user!");
+                Environment.Exit(0);
+                return Task.CompletedTask;
+            });
+        }
+        
         try
         {
             Directory.SetCurrentDirectory("/tmp");
             
-            // kinda stinky but whatever it works
-            await using var fakeProggers = (CompositeProgressBackend)EmniFactory.Create();
-            var kde = fakeProggers.GetBackend<KdeProgressBackend>();
-            // todo: add functionality to EmniProgress to only use main backend
-            IProgressBackend proggers = kde != null ? kde : fakeProggers;
-            if (kde != null)
-            {
-                kde.OnCancel(() =>
-                {
-                    if (!_userCancel) return Task.CompletedTask;
-                    Console.WriteLine("[*] Update cancelled by user.");
-                    kde.CancelAsync("Cancelled by user!");
-                    Environment.Exit(0);
-                    return Task.CompletedTask;
-                });
-            }
             await proggers.StartAsync("Checking for updates...", "Initializing...", $"Discord {ConfigManager.CurrentConfig?.ProperBranch} Bootstrapper {Updater.GetCurrentTag()}", "update");
-            
             await proggers.UpdateAsync(0, "Checking Discord...");
-            bool discordUpdated = await SmartDownloadAsync(ConfigManager.CurrentConfig?.DiscordUrl!, _discordTarPath, "Discord");
+            
+            string channel = ConfigManager.CurrentConfig?.DiscordBranch ?? "canary";
+
+            bool useDistro = await DiscordUpdater.IsDistroAvailableAsync(channel);
+            Console.WriteLine($"[*] Distro updater available for {channel}: {useDistro}");
+
+            bool discordUpdated;
+            if (useDistro)
+            {
+                // Discord stinks
+                var discordUpdater = new DiscordUpdater(_discordAppDir, _cacheDir);
+                discordUpdated = await discordUpdater.UpdateAsync(proggers);
+            }
+            else
+            {
+                discordUpdated = await SmartDownloadAsync(ConfigManager.CurrentConfig?.DiscordUrl!, _discordTarPath, "Discord");
+            }
             
             await proggers.UpdateAsync(0, "Checking Equilotl...");
             bool equilotlUpdated = await SmartDownloadAsync(EquilotlUrl, _equilotlPath, "Equilotl CLI");
@@ -85,13 +103,11 @@ class Bootstrapper
             bool dwiUpdated = await SmartDownloadAsync(DwiUrl, _dwiPath, "DWIPatcher");
             
             // todo: add options to toggle off patching equicord and dwi
-            //       and also add the ability to change discord's launch flags.
             //       would be nice to have.
             //       maybe also custom patches? idfk lol
             if (discordUpdated || !Directory.Exists(_discordAppDir))
             {
-                await proggers.UpdateAsync(0, "Extracting Discord...");
-                await ExtractDiscord();
+                if (!useDistro) await ExtractDiscord();
                 
                 await proggers.UpdateAsync(0, "Setting up desktop entry...");
                 SetupDesktopEntry();
@@ -271,8 +287,16 @@ class Bootstrapper
 
         if (!File.Exists(desktopPath))
         {
+            // Note: on the new discord updater, this case will be hit every time!
+            //       (because we don't actually receive the original tar.gz lol) 
             Console.WriteLine("    [!] Internal .desktop file not found. Creating a fresh one...");
-            File.WriteAllText(desktopPath, "[Desktop Entry]\nType=Application\nName=Discord " + ConfigManager.CurrentConfig?.ProperBranch);
+            File.WriteAllText(desktopPath, $"""
+                                            [Desktop Entry]
+                                            Type=Application
+                                            Icon={ConfigManager.CurrentConfig?.WmName}
+                                            Categories=Network;InstantMessaging;
+                                            Name=Discord {ConfigManager.CurrentConfig?.ProperBranch}
+                                            """);
         }
 
         var lines = File.ReadAllLines(desktopPath).ToList();
