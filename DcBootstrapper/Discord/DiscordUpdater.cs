@@ -59,10 +59,22 @@ public class DiscordUpdater
 
         string moduleDir = GetModuleInstallDir();
         Directory.CreateDirectory(moduleDir);
-
-        foreach (var moduleName in manifest.RequiredModules)
+        
+        string[] modulesToDownload = ConfigManager.InsertModules(manifest.RequiredModules.ToArray());
+        string[] allAvailableModules = manifest.Modules.Keys.ToArray();
+        ConfigManager.CurrentConfig!.AvailableModules = allAvailableModules;
+        ConfigManager.SaveConfig();
+        
+        Console.WriteLine($"[*] Required modules: {string.Join(", ", manifest.RequiredModules)}");
+        Console.WriteLine($"[*] Modules to download (after config): {string.Join(", ", modulesToDownload)}");
+        
+        foreach (var moduleName in modulesToDownload)
         {
-            if (!manifest.Modules.TryGetValue(moduleName, out var moduleInfo)) continue;
+            if (!manifest.Modules.TryGetValue(moduleName, out var moduleInfo))
+            {
+                Console.WriteLine($"    Skipping module {moduleName} (not found in manifest)");
+                continue;
+            }
 
             var pkg = moduleInfo.Full;
             string moduleKey = $"{pkg.HostVersion[0]}.{pkg.HostVersion[1]}.{pkg.HostVersion[2]}_{pkg.ModuleVersion}";

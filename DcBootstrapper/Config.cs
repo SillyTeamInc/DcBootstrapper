@@ -12,6 +12,9 @@ public class Config
     public bool? AutoUpdateBootstrapper { get; set; }
     public List<string>? LaunchArgs { get; set; }
     public Dictionary<string, string>? EnvVars { get; set; }
+    public string[] ModulesToInstall { get; set; } = Array.Empty<string>();
+    [JsonPropertyName("AvailableModules_ReadOnly")]
+    public string[] AvailableModules { get; set; } = Array.Empty<string>();
     
     [JsonIgnore]    
     public string DiscordUrl => DiscordBranch?.ToLower() switch
@@ -45,6 +48,9 @@ public class Config
     
     [JsonIgnore]
     public string ExecutablePath => Path.Combine(InstallPath ?? string.Empty, ExecutableName);
+    
+    
+     
     
     [JsonIgnore]
     public static Config Default => new Config
@@ -99,6 +105,19 @@ public static class ConfigManager
         if (updated) SaveConfig();
 
         return;
+    }
+    
+    public static string[] InsertModules(string[] modules)
+    {
+        if (CurrentConfig == null) return Array.Empty<string>();
+        var moduleSet = new HashSet<string>(CurrentConfig.ModulesToInstall ?? Array.Empty<string>());
+        foreach (var module in modules)
+        {
+            moduleSet.Add(module);
+        }
+        CurrentConfig.ModulesToInstall = moduleSet.ToArray();
+        SaveConfig();
+        return CurrentConfig.ModulesToInstall;
     }
 
     public static void SaveConfig()
