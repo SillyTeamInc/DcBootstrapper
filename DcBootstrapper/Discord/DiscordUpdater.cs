@@ -3,6 +3,7 @@ using System.IO.Compression;
 using System.Text.Json.Serialization;
 using System.Security.Cryptography;
 using System.Text.Json;
+using BsDiff.Core;
 using DcBootstrapper.Utils;
 using EmniProgress.Backends;
 using EmniProgress.Core;
@@ -34,9 +35,119 @@ public class DiscordUpdater
         _installId = File.ReadAllText(idFile).Trim();
     }
 
+    private async Task<bool> TryApplyDeltaAsync(
+        string currentDir, string distroPath, string displayName)
+    {
+        // Extract delta archive to temp dir
+        string tempDir = Path.Combine(_cacheDir, "delta_tmp");
+        if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+        Directory.CreateDirectory(tempDir);
+
+        await ExtractDistroAsync(distroPath, tempDir);
+
+        string manifestPath = Path.Combine(tempDir, "delta_manifest.json");
+        if (!File.Exists(manifestPath)) return false;
+
+        var manifest = JsonSerializer.Deserialize<DeltaManifest>(
+            await File.ReadAllTextAsync(manifestPath));
+        if (manifest == null) return false;
+
+        Console.WriteLine($"    Applying delta for {displayName} ({manifest.Files.Count} entries)...");
+
+        foreach (var (relativePath, entry) in manifest.Files)
+        {
+            string targetPath = Path.Combine(currentDir, relativePath);
+
+            if (entry.Existing != null)
+            {
+                if (File.Exists(targetPath))
+                {
+                    string actual = ComputeSha256(targetPath);
+                    if (!string.Equals(actual, entry.Existing.Sha256, StringComparison.OrdinalIgnoreCase))
+                    {
+                        Console.WriteLine(
+                            $"    [!] Hash mismatch for existing file {relativePath}, falling back to full download.");
+                        return false;
+                    }
+                }
+            }
+            else if (entry.New != null)
+            {
+                string sourcePath = Path.Combine(tempDir, relativePath);
+                if (!File.Exists(sourcePath))
+                {
+                    Console.WriteLine($"    [!] New file {relativePath} missing from delta archive.");
+                    return false;
+                }
+
+                Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
+                File.Copy(sourcePath, targetPath, overwrite: true);
+
+                string actual = ComputeSha256(targetPath);
+                if (!string.Equals(actual, entry.New.Sha256, StringComparison.OrdinalIgnoreCase))
+                {
+                    Console.WriteLine($"    [!] Hash mismatch for new file {relativePath}.");
+                    return false;
+                }
+            }
+            else if (entry.Bsdiff != null)
+            {
+                if (!File.Exists(targetPath))
+                {
+                    Console.WriteLine($"    [!] Source file {relativePath} missing for bsdiff.");
+                    return false;
+                }
+
+                // Verify source hash before patching
+                string srcActual = ComputeSha256(targetPath);
+                if (!string.Equals(srcActual, entry.Bsdiff.SrcHash.Sha256, StringComparison.OrdinalIgnoreCase))
+                {
+                    Console.WriteLine($"    [!] Source hash mismatch for {relativePath}, falling back.");
+                    return false;
+                }
+
+                string patchPath = Path.Combine(tempDir, relativePath);
+                if (!File.Exists(patchPath))
+                {
+                    Console.WriteLine($"    [!] Patch file missing for {relativePath}.");
+                    return false;
+                }
+
+                string patchedPath = targetPath + ".patched";
+                try
+                {
+                    await using var sourceStream = File.OpenRead(targetPath);
+                    await using var patchStream = File.OpenRead(patchPath);
+                    await using var outputStream = File.Create(patchedPath);
+                    BinaryPatchUtility.Apply(sourceStream, () => File.OpenRead(patchPath), outputStream);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"    [!] Bsdiff failed for {relativePath}: {ex.Message}");
+                    if (File.Exists(patchedPath)) File.Delete(patchedPath);
+                    return false;
+                }
+
+                // Verify output hash
+                string outActual = ComputeSha256(patchedPath);
+                if (!string.Equals(outActual, entry.Bsdiff.Hash.Sha256, StringComparison.OrdinalIgnoreCase))
+                {
+                    Console.WriteLine($"    [!] Output hash mismatch for {relativePath}.");
+                    File.Delete(patchedPath);
+                    return false;
+                }
+
+                File.Move(patchedPath, targetPath, overwrite: true);
+            }
+        }
+
+        Directory.Delete(tempDir, true);
+        Console.WriteLine($"    Delta applied successfully.");
+        return true;
+    }
+
     public async Task<bool> UpdateAsync(IProgressBackend balls)
     {
-        
         var manifest = await FetchManifestAsync();
         var state = LoadVersionState();
 
@@ -59,16 +170,18 @@ public class DiscordUpdater
 
         string moduleDir = GetModuleInstallDir();
         Directory.CreateDirectory(moduleDir);
-        
+
         string[] modulesToDownload = ConfigManager.InsertModules(manifest.RequiredModules.ToArray());
         string[] allAvailableModules = manifest.Modules.Keys.ToArray();
         ConfigManager.CurrentConfig!.AvailableModules = allAvailableModules;
         ConfigManager.SaveConfig();
-        
+
         Console.WriteLine($"[*] Required modules: {string.Join(", ", manifest.RequiredModules)}");
         Console.WriteLine($"[*] Modules to download (after config): {string.Join(", ", modulesToDownload)}");
         
-        foreach (var moduleName in modulesToDownload)
+        // TODO: Multithread download ALL modules at once for people with faster internet
+        //       will significantly speed up updates.
+        foreach (string moduleName in modulesToDownload)
         {
             if (!manifest.Modules.TryGetValue(moduleName, out var moduleInfo))
             {
@@ -105,7 +218,7 @@ public class DiscordUpdater
     {
         string configDir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "discord" + ConfigManager.CurrentConfig?.DiscordBranch?.ToLower(),
+            ConfigManager.CurrentConfig?.ExecutableName?.ToLower() ?? "discord",
             _currentVersion ?? "1.0.0",
             "modules"
         );
@@ -258,6 +371,6 @@ public class DiscordUpdater
     private class InstallState
     {
         [JsonPropertyName("host_version")] public string? HostVersion { get; set; }
-        [JsonPropertyName("module_keys")]  public Dictionary<string, string> ModuleKeys { get; set; } = new();
+        [JsonPropertyName("module_keys")] public Dictionary<string, string> ModuleKeys { get; set; } = new();
     }
 }

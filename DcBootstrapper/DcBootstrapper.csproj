@@ -8,6 +8,8 @@
     </PropertyGroup>
 
     <ItemGroup>
+      <PackageReference Include="BsDiff" Version="1.1.0" />
+      <PackageReference Include="Bsdiff.Core" Version="1.0.1" />
       <PackageReference Include="EmniProgress" Version="0.0.7" />
       <PackageReference Include="GitInfo" Version="3.6.0">
         <PrivateAssets>all</PrivateAssets>

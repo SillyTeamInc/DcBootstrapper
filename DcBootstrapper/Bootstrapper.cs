@@ -142,7 +142,7 @@ class Bootstrapper
         }
     }
     
-    private static string FormatBytes(long bytes)
+    public static string FormatBytes(long bytes)
     {
         string[] sizes = { "B", "KB", "MB", "GB", "TB" };
         double len = bytes;
@@ -152,7 +152,7 @@ class Bootstrapper
             order++;
             len /= 1024;
         }
-        return $"{len} {sizes[order]}";
+        return $"{len:F2} {sizes[order]}";
     }
 
     private async Task<bool> SmartDownloadAsync(string url, string destination, string displayName)

@@ -45,7 +45,7 @@ public class Downloader(string url, string filePath, bool isMultithreaded = fals
         }).ToList();
         
         var speedSamples = new Queue<KeyValuePair<DateTime, long>>();
-
+        
         while (!tasks.All(t => t.IsCompleted))
         {
             var currentBytes = BytesDownloaded;
@@ -73,7 +73,7 @@ public class Downloader(string url, string filePath, bool isMultithreaded = fals
             
             
             double percent = TotalBytes > 0 ? (currentBytes * 100.0 / TotalBytes) : 0;
-            await proggers.UpdateAsync((float)percent, $"Downloading - {currentSpeed / 1024:0.00} KB/s");
+            await proggers.UpdateAsync((float)percent, $"Downloading - {Bootstrapper.FormatBytes((long)currentSpeed)}/s");
             
             await Task.Delay(50);
         }
@@ -83,7 +83,7 @@ public class Downloader(string url, string filePath, bool isMultithreaded = fals
         await proggers.CancelAsync("Download complete.");
         Console.WriteLine($"\r[*] Download complete.                    ");
     }
-
+    
     private async Task DownloadChunkAsync(long start, long end, int id)
     {
         using var client = new HttpClient();
