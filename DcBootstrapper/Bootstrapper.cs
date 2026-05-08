@@ -11,7 +11,7 @@ namespace DcBootstrapper;
 
 class Bootstrapper
 {
-    private const string EquilotlUrl = "https://github.com/Equicord/Equilotl/releases/latest/download/EquilotlCli-linux";
+    private const string EquilotlUrl = "https://github.com/Equicord/Equilotl/releases/download/v2.1.8/EquilotlCli-linux";
 
     private const string DwiUrl = "https://github.com/SillyTeamInc/DWIPatcher/releases/download/bleeding-edge/DWIPatcher";
 
