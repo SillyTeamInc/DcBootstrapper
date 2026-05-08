@@ -105,6 +105,7 @@ class Bootstrapper
             // todo: add options to toggle off patching equicord and dwi
             //       would be nice to have.
             //       maybe also custom patches? idfk lol
+            //       we could probably do this by having some templating?
             if (discordUpdated || !Directory.Exists(_discordAppDir))
             {
                 if (!useDistro) await ExtractDiscord();
