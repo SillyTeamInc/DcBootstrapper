@@ -15,7 +15,7 @@ public class Config
     public string[] ModulesToInstall { get; set; } = Array.Empty<string>();
     [JsonPropertyName("AvailableModules_ReadOnly")]
     public string[] AvailableModules { get; set; } = Array.Empty<string>();
-    
+    // TODO: Add Discord Development support
     [JsonIgnore]    
     public string DiscordUrl => DiscordBranch?.ToLower() switch
     {
@@ -38,6 +38,14 @@ public class Config
         "canary" => "discord-canary",
         "ptb" => "discord-ptb",
         _ => "discord"
+    };
+    
+    [JsonIgnore]
+    public string ProperName => DiscordBranch?.ToLower() switch
+    {
+        "canary" => "Discord Canary",
+        "ptb" => "Discord PTB",
+        _ => "Discord"
     };
 
     [JsonIgnore]
