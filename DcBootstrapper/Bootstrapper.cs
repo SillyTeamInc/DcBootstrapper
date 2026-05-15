@@ -296,7 +296,7 @@ class Bootstrapper
                                             Type=Application
                                             Icon={ConfigManager.CurrentConfig?.WmName}
                                             Categories=Network;InstantMessaging;
-                                            Name=Discord {ConfigManager.CurrentConfig?.ProperName}
+                                            Name={ConfigManager.CurrentConfig?.ProperName}
                                             """);
         }
 
