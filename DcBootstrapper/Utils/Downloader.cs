@@ -2,6 +2,7 @@ using EmniProgress.Backends;
 using EmniProgress.Backends.KDE;
 using EmniProgress.Factory;
 using System.Collections.Concurrent;
+using System.Net;
 using System.Threading.Channels;
 
 namespace DcBootstrapper.Utils;
@@ -23,9 +24,8 @@ public class Downloader(string url, string filePath, bool isMultithreaded = fals
         headResponse.EnsureSuccessStatusCode();
 
         TotalBytes = headResponse.Content.Headers.ContentLength
-                     ?? throw new Exception("Could not determine file size.");
+            ?? throw new Exception("Could not determine file size.");
 
-        // scoping it...
         {
             await using var prealloc = new FileStream(
                 filePath, FileMode.Create, FileAccess.Write, FileShare.None, 4096, FileOptions.Asynchronous);
@@ -44,14 +44,13 @@ public class Downloader(string url, string filePath, bool isMultithreaded = fals
             await kde.UpdateDescriptionFieldAsync(1, "File", Path.GetFileName(filePath));
 
         long chunkSize = TotalBytes / taskCount;
-        Console.WriteLine(
-            $"[*] Starting download with {taskCount} threads, chunk size: {Bootstrapper.FormatBytes(chunkSize)}");
+        Console.WriteLine($"[*] Starting download with {taskCount} threads, chunk size: {Bootstrapper.FormatBytes(chunkSize)}");
 
         var tasks = Enumerable.Range(0, taskCount).Select(i =>
         {
             _chunkProgress[i] = 0;
             long start = i * chunkSize;
-            long end = i == taskCount - 1 ? TotalBytes - 1 : start + chunkSize - 1;
+            long end   = i == taskCount - 1 ? TotalBytes - 1 : start + chunkSize - 1;
             return DownloadChunkAsync(start, end, i);
         }).ToList();
 
@@ -68,10 +67,10 @@ public class Downloader(string url, string filePath, bool isMultithreaded = fals
             while (speedSamples.Count > 1 && (now - speedSamples.Peek().Key).TotalSeconds > 1)
                 speedSamples.Dequeue();
 
-            var oldestSample = speedSamples.Peek();
+            var oldestSample   = speedSamples.Peek();
             var elapsedSeconds = (now - oldestSample.Key).TotalSeconds;
-            var bytesDelta = currentBytes - oldestSample.Value;
-            var currentSpeed = elapsedSeconds > 0 ? bytesDelta / elapsedSeconds : 0;
+            var bytesDelta     = currentBytes - oldestSample.Value;
+            var currentSpeed   = elapsedSeconds > 0 ? bytesDelta / elapsedSeconds : 0;
 
             if (kde != null)
             {
@@ -84,8 +83,7 @@ public class Downloader(string url, string filePath, bool isMultithreaded = fals
             }
 
             double percent = TotalBytes > 0 ? (currentBytes * 100.0 / TotalBytes) : 0;
-            await proggers.UpdateAsync((float)percent,
-                $"Downloading - {Bootstrapper.FormatBytes((long)currentSpeed)}/s");
+            await proggers.UpdateAsync((float)percent, $"Downloading - {Bootstrapper.FormatBytes((long)currentSpeed)}/s");
 
             await Task.Delay(50);
         }
@@ -99,10 +97,9 @@ public class Downloader(string url, string filePath, bool isMultithreaded = fals
 
     private async Task DownloadChunkAsync(long start, long end, int id)
     {
-        const int bufferSize = 81920;
+        const int bufferSize      = 81920;
         const int channelCapacity = 64;
-    
-        // dumb and stinky i hate
+
         await using var fileStream = new FileStream(
             filePath, FileMode.Open, FileAccess.Write, FileShare.Write, bufferSize, FileOptions.Asynchronous);
         fileStream.Seek(start, SeekOrigin.Begin);
@@ -111,14 +108,17 @@ public class Downloader(string url, string filePath, bool isMultithreaded = fals
         {
             SingleReader = true,
             SingleWriter = true,
-            FullMode = BoundedChannelFullMode.Wait
+            FullMode     = BoundedChannelFullMode.Wait
         });
 
-        var writeTask = WriteChunkAsync(channel.Reader, fileStream, id);
+        var writeTask = WriteChunkAsync(channel.Reader, fileStream);
 
         try
         {
             var request = new HttpRequestMessage(HttpMethod.Get, url);
+            
+            request.Version       = HttpVersion.Version11;
+            request.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
             request.Headers.UserAgent.ParseAdd("Discord-Updater/1"); // lol
             request.Headers.Range = new System.Net.Http.Headers.RangeHeaderValue(start, end);
 
@@ -133,6 +133,9 @@ public class Downloader(string url, string filePath, bool isMultithreaded = fals
             {
                 var copy = new byte[bytesRead];
                 Buffer.BlockCopy(buffer, 0, copy, 0, bytesRead);
+
+                _chunkProgress[id] += bytesRead;
+
                 await channel.Writer.WriteAsync((copy, bytesRead));
             }
         }
@@ -144,12 +147,9 @@ public class Downloader(string url, string filePath, bool isMultithreaded = fals
         await writeTask;
     }
 
-    private async Task WriteChunkAsync(ChannelReader<(byte[] data, int count)> reader, FileStream fileStream, int id)
+    private static async Task WriteChunkAsync(ChannelReader<(byte[] data, int count)> reader, FileStream fileStream)
     {
         await foreach (var (data, count) in reader.ReadAllAsync())
-        {
             await fileStream.WriteAsync(data.AsMemory(0, count));
-            _chunkProgress[id] += count;
-        }
     }
 }
