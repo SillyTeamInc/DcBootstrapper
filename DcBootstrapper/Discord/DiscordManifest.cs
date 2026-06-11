@@ -84,3 +84,14 @@ public class BsdiffEntry
     [JsonPropertyName("hash")]       public HashEntry Hash      { get; set; } = new();
     [JsonPropertyName("length")]     public long      Length    { get; set; }
 }
+
+public class DbFileEntry {
+    [JsonPropertyName("New")] public DbHash New { get; set; } = new();
+}
+public class DbHash {
+    [JsonPropertyName("Sha256")] public string Sha256 { get; set; } = "";
+}
+public class DbManifest {
+    [JsonPropertyName("manifest_version")] public int ManifestVersion { get; set; } = 1;
+    [JsonPropertyName("files")] public Dictionary<string, DbFileEntry> Files { get; set; } = new();
+}

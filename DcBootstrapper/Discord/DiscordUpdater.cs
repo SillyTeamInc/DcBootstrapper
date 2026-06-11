@@ -3,10 +3,10 @@ using System.IO.Compression;
 using System.Text.Json.Serialization;
 using System.Security.Cryptography;
 using System.Text.Json;
-using BsDiff.Core;
 using DcBootstrapper.Utils;
 using EmniProgress.Backends;
 using EmniProgress.Core;
+using Microsoft.Data.Sqlite;
 
 namespace DcBootstrapper.Discord;
 
@@ -18,14 +18,15 @@ public class DiscordUpdater
     private const string ManifestUrl = "https://updates.discord.com/distributions/app/manifests/latest";
     private const string UserAgent = "Discord-Updater/1";
 
-    private readonly string _installDir;
+    private readonly string _installDirectory;
     private readonly string _cacheDir;
     private readonly string _versionFile;
     private readonly string _installId;
+    public static string DiscordAppDir = "";
 
     public DiscordUpdater(string installDir, string cacheDir)
     {
-        _installDir = installDir;
+        _installDirectory = installDir;
         _cacheDir = cacheDir;
         _versionFile = Path.Combine(cacheDir, "discord_version.json");
 
@@ -35,141 +36,50 @@ public class DiscordUpdater
         _installId = File.ReadAllText(idFile).Trim();
     }
 
-    private async Task<bool> TryApplyDeltaAsync(
-        string currentDir, string distroPath, string displayName)
-    {
-        // Extract delta archive to temp dir
-        string tempDir = Path.Combine(_cacheDir, "delta_tmp");
-        if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
-        Directory.CreateDirectory(tempDir);
-
-        await ExtractDistroAsync(distroPath, tempDir);
-
-        string manifestPath = Path.Combine(tempDir, "delta_manifest.json");
-        if (!File.Exists(manifestPath)) return false;
-
-        var manifest = JsonSerializer.Deserialize<DeltaManifest>(
-            await File.ReadAllTextAsync(manifestPath));
-        if (manifest == null) return false;
-
-        Console.WriteLine($"    Applying delta for {displayName} ({manifest.Files.Count} entries)...");
-
-        foreach (var (relativePath, entry) in manifest.Files)
-        {
-            string targetPath = Path.Combine(currentDir, relativePath);
-
-            if (entry.Existing != null)
-            {
-                if (File.Exists(targetPath))
-                {
-                    string actual = ComputeSha256(targetPath);
-                    if (!string.Equals(actual, entry.Existing.Sha256, StringComparison.OrdinalIgnoreCase))
-                    {
-                        Console.WriteLine(
-                            $"    [!] Hash mismatch for existing file {relativePath}, falling back to full download.");
-                        return false;
-                    }
-                }
-            }
-            else if (entry.New != null)
-            {
-                string sourcePath = Path.Combine(tempDir, relativePath);
-                if (!File.Exists(sourcePath))
-                {
-                    Console.WriteLine($"    [!] New file {relativePath} missing from delta archive.");
-                    return false;
-                }
-
-                Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
-                File.Copy(sourcePath, targetPath, overwrite: true);
-
-                string actual = ComputeSha256(targetPath);
-                if (!string.Equals(actual, entry.New.Sha256, StringComparison.OrdinalIgnoreCase))
-                {
-                    Console.WriteLine($"    [!] Hash mismatch for new file {relativePath}.");
-                    return false;
-                }
-            }
-            else if (entry.Bsdiff != null)
-            {
-                if (!File.Exists(targetPath))
-                {
-                    Console.WriteLine($"    [!] Source file {relativePath} missing for bsdiff.");
-                    return false;
-                }
-
-                // Verify source hash before patching
-                string srcActual = ComputeSha256(targetPath);
-                if (!string.Equals(srcActual, entry.Bsdiff.SrcHash.Sha256, StringComparison.OrdinalIgnoreCase))
-                {
-                    Console.WriteLine($"    [!] Source hash mismatch for {relativePath}, falling back.");
-                    return false;
-                }
-
-                string patchPath = Path.Combine(tempDir, relativePath);
-                if (!File.Exists(patchPath))
-                {
-                    Console.WriteLine($"    [!] Patch file missing for {relativePath}.");
-                    return false;
-                }
-
-                string patchedPath = targetPath + ".patched";
-                try
-                {
-                    await using var sourceStream = File.OpenRead(targetPath);
-                    await using var patchStream = File.OpenRead(patchPath);
-                    await using var outputStream = File.Create(patchedPath);
-                    BinaryPatchUtility.Apply(sourceStream, () => File.OpenRead(patchPath), outputStream);
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"    [!] Bsdiff failed for {relativePath}: {ex.Message}");
-                    if (File.Exists(patchedPath)) File.Delete(patchedPath);
-                    return false;
-                }
-
-                // Verify output hash
-                string outActual = ComputeSha256(patchedPath);
-                if (!string.Equals(outActual, entry.Bsdiff.Hash.Sha256, StringComparison.OrdinalIgnoreCase))
-                {
-                    Console.WriteLine($"    [!] Output hash mismatch for {relativePath}.");
-                    File.Delete(patchedPath);
-                    return false;
-                }
-
-                File.Move(patchedPath, targetPath, overwrite: true);
-            }
-        }
-
-        Directory.Delete(tempDir, true);
-        Console.WriteLine($"    Delta applied successfully.");
-        return true;
-    }
-
     public async Task<bool> UpdateAsync(IProgressBackend balls)
     {
         var manifest = await FetchManifestAsync();
         var state = LoadVersionState();
 
         string latestVersion = manifest.Full.VersionString;
-        _currentVersion = latestVersion;
         Console.WriteLine($"[*] Discord latest: {latestVersion}, installed: {state.HostVersion ?? "none"}");
+
+
+        string symPath = Path.Combine(_installDirectory, $"app-{latestVersion}");
+        DiscordAppDir = symPath;
+        Console.WriteLine($"[*] Discord app path: {DiscordAppDir}");
 
         bool hostUpdated = false;
 
         if (state.HostVersion != latestVersion)
         {
+            string oldAppDir = Path.Combine(_installDirectory, $"app-{state.HostVersion}");
+            if (Directory.Exists(oldAppDir))     
+            {
+                Console.WriteLine($"[*] Removing old Discord host at {oldAppDir}...");
+                try
+                {
+                    // i'm paranoid
+                    if (oldAppDir.Contains("app-"))
+                        Directory.Delete(oldAppDir, true);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"    Failed to remove old host: {ex.Message}");
+                }
+            } else
+            {
+                Console.WriteLine($"[*] No existing host found at {oldAppDir}? Skipping removal!!");
+            }
+            
             await balls.UpdateAsync(0, "Downloading full Discord host...");
             Console.WriteLine($"[*] Downloading full Discord host {latestVersion}...");
             string distroPath = Path.Combine(_cacheDir, "discord_host.distro");
             await DownloadAndVerifyAsync(manifest.Full.Url, distroPath, manifest.Full.Sha256, "Discord host");
-            await ExtractDistroAsync(distroPath, _installDir);
+            await ExtractDistroAsync(distroPath, DiscordAppDir);
             state.HostVersion = latestVersion;
             hostUpdated = true;
         }
-
-        string moduleDir = GetModuleInstallDir();
-        Directory.CreateDirectory(moduleDir);
 
         string[] modulesToDownload = ConfigManager.InsertModules(manifest.RequiredModules.ToArray());
         string[] allAvailableModules = manifest.Modules.Keys.ToArray();
@@ -178,7 +88,7 @@ public class DiscordUpdater
 
         Console.WriteLine($"[*] Required modules: {string.Join(", ", manifest.RequiredModules)}");
         Console.WriteLine($"[*] Modules to download (after config): {string.Join(", ", modulesToDownload)}");
-        
+
         // TODO: Multithread download ALL modules at once for people with faster internet
         //       will significantly speed up updates.
         foreach (string moduleName in modulesToDownload)
@@ -200,43 +110,94 @@ public class DiscordUpdater
             string modulePath = Path.Combine(_cacheDir, $"{moduleName}.distro");
             await DownloadAndVerifyAsync(pkg.Url, modulePath, pkg.Sha256, moduleName);
 
-            string moduleInstallDir = Path.Combine(moduleDir, moduleName);
+            string moduleInstallDir =
+                Path.Combine(DiscordAppDir, "modules", $"{moduleName}-{pkg.ModuleVersion}", moduleName);
             Directory.CreateDirectory(moduleInstallDir);
             await ExtractDistroAsync(modulePath, moduleInstallDir);
             state.ModuleKeys[moduleName] = moduleKey;
         }
 
-        await WriteInstalledJsonAsync(moduleDir, manifest);
-
         SaveVersionState(state);
+        await balls.UpdateAsync(0, "Updating database...");
+        RecreateInstallerDb(ConfigManager.CurrentConfig?.DiscordBranch ?? "stable", latestVersion,
+            JsonSerializer.Serialize(manifest));
+
         return hostUpdated;
     }
 
-    private string? _currentVersion;
-
-    private string GetModuleInstallDir()
+    public static string GetLatestAppPath()
     {
-        string configDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            ConfigManager.CurrentConfig?.ExecutableName?.ToLower() ?? "discord",
-            _currentVersion ?? "1.0.0",
-            "modules"
-        );
-        return configDir;
+        return DiscordAppDir != ""
+            ? DiscordAppDir
+            : throw new Exception("Discord has not been updated yet, app path is not available.");
     }
 
-    private async Task WriteInstalledJsonAsync(string moduleDir, DiscordManifest manifest)
+    private void RecreateInstallerDb(string branch, string versionStr, string rawManifestJson)
     {
-        var installed = manifest.RequiredModules
-            .Where(m => manifest.Modules.ContainsKey(m))
-            .ToDictionary(
-                m => m,
-                m => manifest.Modules[m].Full.ModuleVersion
-            );
+        string dbPath = Path.Combine(_installDirectory, "installer.db");
+        Directory.CreateDirectory(_installDirectory);
 
-        string json = JsonSerializer.Serialize(installed, new JsonSerializerOptions { WriteIndented = true });
-        await File.WriteAllTextAsync(Path.Combine(moduleDir, "installed.json"), json);
+        var versionParts = versionStr.Split('.').Select(int.Parse).ToArray();
+
+        var hostManifest = new DbManifest();
+        foreach (var file in Directory.GetFiles(DiscordAppDir, "*", SearchOption.AllDirectories))
+        {
+            string relativePath = Path.GetRelativePath(DiscordAppDir, file);
+
+            hostManifest.Files[relativePath] = new DbFileEntry { New = new DbHash { Sha256 = ComputeSha256(file) } };
+        }
+
+        var installedState = new[]
+        {
+            new
+            {
+                host_version = new
+                {
+                    host = new { name = "app", release_channel = branch.ToLower(), platform = "linux", arch = "x64" },
+                    version = versionParts
+                },
+                install_state = "Installed",
+                distro_manifest = hostManifest,
+                modules = ConfigManager.CurrentConfig!.AvailableModules.Select(mod => new
+                {
+                    module_version = new
+                    {
+                        module = new
+                        {
+                            host_version = new
+                            {
+                                host = new { name = "app", release_channel = branch, platform = "linux", arch = "x64" },
+                                version = versionParts
+                            },
+                            name = mod
+                        },
+                        version = 1
+                    },
+                    distro_manifest = new DbManifest(),
+                    install_state = "Installed"
+                }).ToArray()
+            }
+        };
+
+        string installedStateJson = JsonSerializer.Serialize(installedState);
+
+        using var connection = new SqliteConnection($"Data Source={dbPath}");
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText =
+            "CREATE TABLE IF NOT EXISTS key_values (key TEXT NOT NULL PRIMARY KEY, value TEXT NOT NULL); DELETE FROM key_values;";
+        command.ExecuteNonQuery();
+
+        command.CommandText =
+            "INSERT INTO key_values (key, value) VALUES ('install_id', @id), (@hostKey, @hostVal), (@latestKey, @latestVal);";
+        command.Parameters.AddWithValue("@id", $"\"{_installId}\"");
+        command.Parameters.AddWithValue("@hostKey", $"host/app/{branch}/linux/x64");
+        command.Parameters.AddWithValue("@hostVal", installedStateJson);
+        command.Parameters.AddWithValue("@latestKey", $"latest/host/app/{branch}/linux/x64");
+        command.Parameters.AddWithValue("@latestVal", rawManifestJson);
+        command.ExecuteNonQuery();
     }
+
 
     public static async Task<bool> IsDistroAvailableAsync(string channel)
     {
@@ -246,7 +207,7 @@ public class DiscordUpdater
             client.DefaultRequestHeaders.UserAgent.ParseAdd(UserAgent);
             client.Timeout = TimeSpan.FromSeconds(5);
 
-            string url = // install id isn't required but i am not risking it
+            string url =
                 $"{ManifestUrl}?install_id=00000000-0000-0000-0000-000000000000&channel={channel}&platform=linux&arch=x64&platform_version=1.0.0";
             var response = await client.GetAsync(url);
 
@@ -364,9 +325,8 @@ public class DiscordUpdater
         }
     }
 
-    private void SaveVersionState(InstallState state) =>
-        File.WriteAllText(_versionFile,
-            JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true }));
+    private void SaveVersionState(InstallState state) => File.WriteAllText(_versionFile,
+        JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true }));
 
     private class InstallState
     {

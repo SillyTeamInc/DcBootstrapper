@@ -17,7 +17,8 @@ class Bootstrapper
 
     // app
     private readonly string _installDir;
-    private readonly string _discordAppDir;
+    private readonly string _desktopPath;
+    private string _discordAppDirectory;
 
     // cache
     private readonly string _discordTarPath;
@@ -29,9 +30,9 @@ class Bootstrapper
     {
         var baseDir = ConfigManager.CurrentConfig?.InstallPath ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "DiscordCustom");
         _cacheDir = Path.Combine(baseDir, "Cache");
-        _installDir = Path.Combine(baseDir, "App");
-        
-        _discordAppDir = Path.Combine(_installDir, ConfigManager.CurrentConfig?.ExecutableName ?? "DiscordCanary");
+        _desktopPath = Path.Combine(baseDir, ConfigManager.CurrentConfig?.DesktopName ?? "discord-custom.desktop");
+        _installDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".config",
+            ConfigManager.CurrentConfig?.ExecutableName?.ToLower() ?? "discord");
 
         _discordTarPath = Path.Combine(_cacheDir, "discord.tar.gz");
         _equilotlPath = Path.Combine(_cacheDir, "EquilotlCli-linux");
@@ -88,8 +89,9 @@ class Bootstrapper
             if (useDistro)
             {
                 // Discord stinks
-                var discordUpdater = new DiscordUpdater(_discordAppDir, _cacheDir);
+                var discordUpdater = new DiscordUpdater(_installDir, _cacheDir);
                 discordUpdated = await discordUpdater.UpdateAsync(proggers);
+                _discordAppDirectory = DiscordUpdater.DiscordAppDir;
             }
             else
             {
@@ -106,12 +108,9 @@ class Bootstrapper
             //       would be nice to have.
             //       maybe also custom patches? idfk lol
             //       we could probably do this by having some templating?
-            if (discordUpdated || !Directory.Exists(_discordAppDir))
+            if (discordUpdated || !Directory.Exists(_discordAppDirectory))
             {
                 if (!useDistro) await ExtractDiscord();
-                
-                await proggers.UpdateAsync(0, "Setting up desktop entry...");
-                SetupDesktopEntry();
                 
                 await proggers.UpdateAsync(0, "Applying equicord patch...");
                 PatchWithEquicord();
@@ -129,6 +128,9 @@ class Bootstrapper
                     PatchWithDwi();
                 }
             }
+            
+            await proggers.UpdateAsync(0, "Setting up desktop entry...");
+            SetupDesktopEntry();
 
             _userCancel = false;
             await proggers.CancelAsync("Download finished");
@@ -205,10 +207,10 @@ class Bootstrapper
 
         Console.WriteLine($"[*] Extracting Discord to {_installDir}...");
 
-        if (Directory.Exists(_discordAppDir))
+        if (Directory.Exists(_discordAppDirectory))
         {
             Console.WriteLine("[!] Removing old installation!");
-            Directory.Delete(_discordAppDir, true);
+            Directory.Delete(_discordAppDirectory, true);
         }
         
         // this is a one-time thing so i'm not making into a util
@@ -243,8 +245,8 @@ class Bootstrapper
     {
         Console.WriteLine("[*] Patching with Equilotl...");
         MakeExecutable(_equilotlPath);
-
-        string args = $"-install -location {_discordAppDir}";
+        
+        string args = $"-install -location {_discordAppDirectory}";
         ProcessUtil.RunProcess(_equilotlPath, args, throwOnError: false);
     }
 
@@ -253,13 +255,13 @@ class Bootstrapper
         Console.WriteLine("[*] Patching with DWIPatcher...");
         MakeExecutable(_dwiPath);
 
-        string resourcesPath = Path.Combine(_discordAppDir, "resources");
+        string resourcesPath = Path.Combine(_discordAppDirectory, "resources");
         ProcessUtil.RunProcess(_dwiPath, $"\"{resourcesPath}\"", throwOnError: false);
     }
 
     private void LaunchDiscord()
     {
-        string binary = Path.Combine(_discordAppDir, ConfigManager.CurrentConfig?.ExecutableName ?? "DiscordCanary");
+        string binary = Path.Combine(DiscordUpdater.GetLatestAppPath(), ConfigManager.CurrentConfig?.ExecutableName ?? "DiscordCanary");
         Console.WriteLine($"[*] Launching Discord from {binary}...");
 
         string cmd =
@@ -275,14 +277,14 @@ class Bootstrapper
             : $"{binary} {discordArgs}".TrimEnd();
 
         var envVars = ConfigManager.CurrentConfig?.EnvVars;
-        ProcessUtil.RunProcess(cmd, args, workingDirectory: _discordAppDir, waitForExit: false, envVars: envVars);
+        ProcessUtil.RunProcess(cmd, args, workingDirectory: DiscordUpdater.GetLatestAppPath(), waitForExit: false, envVars: envVars);
     }
 
     private void SetupDesktopEntry()
     {
         Console.WriteLine("[*] Patching .desktop file...");
 
-        string desktopPath = Path.Combine(_discordAppDir, ConfigManager.CurrentConfig?.DesktopName ?? "discord-canary.desktop");
+        string desktopPath = _desktopPath;
         string bootstrapperPath =
             Environment.ProcessPath ?? throw new Exception("Could not determine bootstrapper path.");
 
@@ -305,7 +307,7 @@ class Bootstrapper
         var updates = new Dictionary<string, string>
         {
             { "Exec", $"\"{bootstrapperPath}\"" },
-            { "Path", _discordAppDir },
+            { "Path", DiscordUpdater.GetLatestAppPath() },
             { "StartupWMClass", ConfigManager.CurrentConfig?.WmName ?? "discord-canary" },
             { "Comment", "Discord " + ConfigManager.CurrentConfig?.ProperBranch + " patched with Equicord and the Wayland Idle fix."  }
         };
