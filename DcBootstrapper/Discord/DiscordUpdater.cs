@@ -43,7 +43,56 @@ public class DiscordUpdater
 
         string latestVersion = manifest.Full.VersionString;
         Console.WriteLine($"[*] Discord latest: {latestVersion}, installed: {state.HostVersion ?? "none"}");
-
+        
+        if (state.HostVersion != null && !ConfigManager.IsBreakingVersion(Program.CurrentBreakingVersion))
+        {
+            ConfigManager.SetBreakingVersion(Program.CurrentBreakingVersion);
+            Console.WriteLine($"[*] Detected breaking update #{latestVersion}, clearing old versions...");
+            
+            string[] dirsToDelete =
+            [
+                Path.Combine(_installDirectory, $"app-{state.HostVersion}"),
+                Path.Combine(_installDirectory, state.HostVersion),
+                Bootstrapper.OldAppDir ?? ""
+            ];
+            
+            foreach (var dir in dirsToDelete)
+            {
+                if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
+                {
+                    Console.WriteLine($"    Removing {dir}...");
+                    try
+                    {
+                        // i'm paranoid
+                        if (dir.Contains("app-") || dir.Contains("discord") || dir.Contains("App"))
+                            Directory.Delete(dir, true);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"    Failed to remove {dir}: {ex.Message}");
+                    }
+                }
+            }
+            
+            string userAppsFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "applications");
+            string linkPath = Path.Combine(userAppsFolder, "discord-custom.desktop");
+            
+            if (File.Exists(linkPath) || Directory.Exists(linkPath))
+            {
+                Console.WriteLine($"    Removing old symlink at {linkPath}...");
+                try
+                {
+                    File.Delete(linkPath);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"    Failed to remove old symlink: {ex.Message}");
+                }
+            }
+            
+            state = new InstallState();
+        }
 
         string symPath = Path.Combine(_installDirectory, $"app-{latestVersion}");
         DiscordAppDir = symPath;
@@ -75,7 +124,7 @@ public class DiscordUpdater
             await balls.UpdateAsync(0, "Downloading full Discord host...");
             Console.WriteLine($"[*] Downloading full Discord host {latestVersion}...");
             string distroPath = Path.Combine(_cacheDir, "discord_host.distro");
-            await DownloadAndVerifyAsync(manifest.Full.Url, distroPath, manifest.Full.Sha256, "Discord host");
+            await DownloadAndVerifyAsync(manifest.Full.Url, distroPath, manifest.Full.Sha256, "Discord host", false);
             await ExtractDistroAsync(distroPath, DiscordAppDir);
             state.HostVersion = latestVersion;
             hostUpdated = true;
@@ -89,33 +138,57 @@ public class DiscordUpdater
         Console.WriteLine($"[*] Required modules: {string.Join(", ", manifest.RequiredModules)}");
         Console.WriteLine($"[*] Modules to download (after config): {string.Join(", ", modulesToDownload)}");
 
-        // TODO: Multithread download ALL modules at once for people with faster internet
-        //       will significantly speed up updates.
-        foreach (string moduleName in modulesToDownload)
+        // 1. Setup the concurrency limit
+        bool multiDownloadModules = ConfigManager.CurrentConfig?.MultiDownloadModules ?? false;
+        int maxConcurrentDownloads = ConfigManager.CurrentConfig?.MaxConcurrentDownloads ?? 3;
+        int totalModules = modulesToDownload.Length;
+        int completedCount = 0;
+        SemaphoreSlim semaphore = new SemaphoreSlim(multiDownloadModules ? maxConcurrentDownloads : 1);
+        
+        var downloadTasks = modulesToDownload.Select(async moduleName =>
         {
-            if (!manifest.Modules.TryGetValue(moduleName, out var moduleInfo))
+            await semaphore.WaitAsync();
+            try
             {
-                Console.WriteLine($"    Skipping module {moduleName} (not found in manifest)");
-                continue;
+                if (!manifest.Modules.TryGetValue(moduleName, out var moduleInfo))
+                {
+                    Console.WriteLine($"    Skipping module {moduleName} (not found in manifest)");
+                    return;
+                }
+
+                var pkg = moduleInfo.Full;
+                string moduleKey = $"{pkg.HostVersion[0]}.{pkg.HostVersion[1]}.{pkg.HostVersion[2]}_{pkg.ModuleVersion}";
+
+                lock (state.ModuleKeys)
+                {
+                    if (state.ModuleKeys.TryGetValue(moduleName, out string? installedKey) && installedKey == moduleKey)
+                        return;
+                }
+
+                Console.WriteLine($"[*] Downloading module {moduleName} v{pkg.ModuleVersion}...");
+
+                string modulePath = Path.Combine(_cacheDir, $"{moduleName}.distro");
+                await DownloadAndVerifyAsync(pkg.Url, modulePath, pkg.Sha256, moduleName, multiDownloadModules);
+
+                string moduleInstallDir = Path.Combine(DiscordAppDir, "modules", $"{moduleName}-{pkg.ModuleVersion}", moduleName);
+                Directory.CreateDirectory(moduleInstallDir);
+                await ExtractDistroAsync(modulePath, moduleInstallDir);
+
+                lock (state.ModuleKeys)
+                {
+                    state.ModuleKeys[moduleName] = moduleKey;
+                }
+                
+                int current = Interlocked.Increment(ref completedCount);
+                await balls.UpdateAsync(0, $"Updated {current}/{totalModules} modules...");
             }
+            finally
+            {
+                semaphore.Release();
+            }
+        });
 
-            var pkg = moduleInfo.Full;
-            string moduleKey = $"{pkg.HostVersion[0]}.{pkg.HostVersion[1]}.{pkg.HostVersion[2]}_{pkg.ModuleVersion}";
-
-            if (state.ModuleKeys.TryGetValue(moduleName, out string? installedKey) && installedKey == moduleKey)
-                continue;
-
-            Console.WriteLine($"[*] Downloading module {moduleName} v{pkg.ModuleVersion}...");
-            await balls.UpdateAsync(0, "Downloading module " + moduleName + "...");
-            string modulePath = Path.Combine(_cacheDir, $"{moduleName}.distro");
-            await DownloadAndVerifyAsync(pkg.Url, modulePath, pkg.Sha256, moduleName);
-
-            string moduleInstallDir =
-                Path.Combine(DiscordAppDir, "modules", $"{moduleName}-{pkg.ModuleVersion}", moduleName);
-            Directory.CreateDirectory(moduleInstallDir);
-            await ExtractDistroAsync(modulePath, moduleInstallDir);
-            state.ModuleKeys[moduleName] = moduleKey;
-        }
+        await Task.WhenAll(downloadTasks);
 
         SaveVersionState(state);
         await balls.UpdateAsync(0, "Updating database...");
@@ -241,9 +314,9 @@ public class DiscordUpdater
                ?? throw new Exception("Failed to deserialize Discord manifest.");
     }
 
-    private async Task DownloadAndVerifyAsync(string url, string destination, string expectedSha256, string displayName)
+    private async Task DownloadAndVerifyAsync(string url, string destination, string expectedSha256, string displayName, bool isConcurrent)
     {
-        var downloader = new Downloader(url, destination, isMultithreaded: true);
+        var downloader = new Downloader(url, destination, isMultithreaded: true, isConcurrent: isConcurrent);
         await downloader.DownloadFileMultithreaded();
 
         Console.Write($"    Verifying {displayName}... ");

@@ -15,6 +15,11 @@ public class Config
     public string[] ModulesToInstall { get; set; } = Array.Empty<string>();
     [JsonPropertyName("AvailableModules_ReadOnly")]
     public string[] AvailableModules { get; set; } = Array.Empty<string>();
+    public bool MultiDownloadModules { get; set; } = false;
+    public int MaxConcurrentDownloads { get; set; } = 3;
+    [JsonPropertyName("BreakingVersion_DoNotModify")]
+    public int BreakingVersion { get; set; } = 0;
+    
     // TODO: Add Discord Development support
     [JsonIgnore]    
     public string DiscordUrl => DiscordBranch?.ToLower() switch
@@ -56,9 +61,6 @@ public class Config
     
     [JsonIgnore]
     public string ExecutablePath => Path.Combine(InstallPath ?? string.Empty, ExecutableName);
-    
-    
-     
     
     [JsonIgnore]
     public static Config Default => new Config
@@ -115,6 +117,19 @@ public static class ConfigManager
         return;
     }
     
+    public static bool IsBreakingVersion(int version)
+    {
+        if (CurrentConfig == null) return false;
+        return version == CurrentConfig.BreakingVersion;
+    }
+    
+    public static void SetBreakingVersion(int version)
+    {
+        if (CurrentConfig == null) return;
+        CurrentConfig.BreakingVersion = version;
+        SaveConfig();
+    }
+
     public static string[] InsertModules(string[] modules)
     {
         if (CurrentConfig == null) return Array.Empty<string>();

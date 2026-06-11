@@ -9,6 +9,7 @@ namespace DcBootstrapper;
 
 class Program
 {
+    public const int CurrentBreakingVersion = 1;
     static async Task Main(string[] args)
     {
         if (OperatingSystem.IsWindows()) return;

@@ -25,11 +25,13 @@ class Bootstrapper
     private readonly string _equilotlPath;
     private readonly string _dwiPath;
     private readonly string _cacheDir;
+    public static string? OldAppDir { get; private set; } = null;
 
     public Bootstrapper()
     {
         var baseDir = ConfigManager.CurrentConfig?.InstallPath ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "DiscordCustom");
         _cacheDir = Path.Combine(baseDir, "Cache");
+        OldAppDir = Path.Combine(baseDir, "App");
         _desktopPath = Path.Combine(baseDir, ConfigManager.CurrentConfig?.DesktopName ?? "discord-custom.desktop");
         _installDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".config",
             ConfigManager.CurrentConfig?.ExecutableName?.ToLower() ?? "discord");
